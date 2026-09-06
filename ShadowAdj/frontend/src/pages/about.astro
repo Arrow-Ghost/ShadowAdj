@@ -1,0 +1,47 @@
+---
+import Base from '@/layouts/Base.astro';
+---
+
+<Base title="ShadowADJ — about">
+  <section class="mx-auto max-w-2xl px-4 py-12 leading-relaxed">
+    <h1 class="text-3xl font-bold">Why ShadowADJ works this way</h1>
+
+    <p class="mt-5 text-white/70">
+      ShadowADJ started from a real question: debate judges and interviewers have almost no tooling to
+      help them pay attention to <em>delivery</em>. But the obvious version of that tool — one that
+      listens to a live answer and outputs “this person is probably using AI” — is not something that
+      can be built responsibly.
+    </p>
+
+    <h2 class="mt-8 text-xl font-semibold">Speech-based AI detection doesn’t work</h2>
+    <p class="mt-3 text-white/70">
+      Text AI-detectors already misfire often enough that major vendors have pulled or retired them,
+      and they disproportionately flag non-native English speakers. Running the same idea on
+      transcribed live speech is less reliable, not more. Every intuitive signal — “fewer filler
+      words than usual”, “bigger vocabulary than their baseline”, “unusually well-organised” — also
+      describes someone who simply prepared, rehearsed, learned formal English, or was trained in
+      structured argument.
+    </p>
+
+    <h2 class="mt-8 text-xl font-semibold">The stakes make false positives serious</h2>
+    <p class="mt-3 text-white/70">
+      In an interview or an exam, a “78% — review” badge isn’t neutral information. It anchors the
+      evaluator against the candidate before any decision is made, and the person it happens to
+      usually never finds out. So ShadowADJ has no verdict output at all — not hidden, not advisory.
+      The API simply cannot return one.
+    </p>
+
+    <h2 class="mt-8 text-xl font-semibold">What it does instead</h2>
+    <ul class="mt-3 list-disc space-y-2 pl-5 text-white/70">
+      <li>Descriptive metrics only: pace, pauses, filler rate, vocabulary variety, talk ratio, answer latency.</li>
+      <li>Consent gate before any capture; the recorded person sees the same screen as everyone else.</li>
+      <li>Audio held in memory and discarded at session end. No account, no server-side profile.</li>
+      <li>Optional written coaching notes, addressed to the speaker, about delivery and structure.</li>
+    </ul>
+
+    <p class="mt-8 text-sm text-white/45">
+      If you’re evaluating someone, ShadowADJ is an aid to your own attention — never a substitute for
+      your judgement, and never evidence of misconduct.
+    </p>
+  </section>
+</Base>
