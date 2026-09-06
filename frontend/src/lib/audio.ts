@@ -72,6 +72,9 @@ export async function startCapture(opts: {
   socket.onclose = () => opts.onClose?.();
 
   const audioCtx = new AudioContext();
+  if (audioCtx.state === 'suspended') {
+    await audioCtx.resume();
+  }
   await audioCtx.audioWorklet.addModule('/capture-worklet.js');
   const src = audioCtx.createMediaStreamSource(stream);
 

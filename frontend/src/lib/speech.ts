@@ -39,7 +39,7 @@ export function startBrowserSpeech(handlers: Handlers, lang?: string): () => voi
       else interim += chunk;
     }
     if (final) handlers.onResult(final.trim(), true);
-    else if (interim) handlers.onResult(interim.trim(), false);
+    if (interim) handlers.onResult(interim.trim(), false);
   };
 
   rec.onerror = (ev: any) => {

@@ -103,6 +103,11 @@ export class SpeechCore extends EventEmitter<SpeechEvents> {
     return this.source;
   }
 
+  setTranscriptSource(src: TranscriptSourceMode): void {
+    this.source = src;
+    this.analyzer.setTranscriptSource(src);
+  }
+
   get transcribing(): boolean {
     return this.pump?.inFlight ?? false;
   }
@@ -116,7 +121,11 @@ export class SpeechCore extends EventEmitter<SpeechEvents> {
   }
 
   ingestBrowserTranscript(text: string, isFinal: boolean): void {
-    if (this.source !== 'browser') return;
+    if (this.source !== 'browser') {
+      this.source = 'browser';
+      this.analyzer.setTranscriptSource('browser');
+      this.pump?.stop();
+    }
     this.analyzer.pushTranscript({ text, isFinal });
     if (isFinal && text.trim()) this.emit('transcript', { text, isFinal: true, source: 'browser' });
   }

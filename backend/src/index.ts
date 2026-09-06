@@ -717,6 +717,9 @@ wss.on('connection', (ws, req) => {
     if (!msg) return;
     switch (msg.type) {
       case 'hello':
+        if (msg.transcriptSource && msg.transcriptSource !== rt.core.transcriptSource) {
+          rt.core.setTranscriptSource(msg.transcriptSource);
+        }
         send({ type: 'config', transcriptSource: rt.core.transcriptSource });
         break;
       case 'transcript':

@@ -319,6 +319,8 @@ export class AIGateway {
         formData.append('model', model);
         formData.append('response_format', 'verbose_json');
 
+        formData.append('temperature', '0');
+
         const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
           method: 'POST',
           headers: { Authorization: `Bearer ${this.groqApiKey}` },
@@ -334,7 +336,7 @@ export class AIGateway {
         const rawTranscript = (audioData.text ?? '').trim();
         const detectedLang = audioData.language ?? 'en';
 
-        if (!rawTranscript || TRANSCRIBE_EMPTY_RE.test(rawTranscript)) {
+        if (!rawTranscript || TRANSCRIBE_EMPTY_RE.test(rawTranscript) || isWhisperHallucination(rawTranscript)) {
           return { text: '{ "utterances": [] }', inputTokens: 0, outputTokens: 0 };
         }
 
@@ -383,11 +385,7 @@ export class AIGateway {
         formData.append('file', new Blob([wavBuffer], { type: 'audio/wav' }), 'speech.wav');
         formData.append('model', model);
         formData.append('response_format', 'json');
-
-        const textPrompt = parts.map((p) => ('text' in p ? p.text : '')).filter(Boolean).join(' ');
-        if (textPrompt) {
-          formData.append('prompt', textPrompt.slice(0, 800));
-        }
+        formData.append('temperature', '0');
 
         const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
           method: 'POST',
@@ -401,7 +399,11 @@ export class AIGateway {
         }
 
         const data = (await res.json()) as { text?: string };
-        return { text: data.text ?? '', inputTokens: 0, outputTokens: 0 };
+        const rawText = (data.text ?? '').trim();
+        if (!rawText || isWhisperHallucination(rawText)) {
+          return { text: '', inputTokens: 0, outputTokens: 0 };
+        }
+        return { text: rawText, inputTokens: 0, outputTokens: 0 };
       }
     }
 
@@ -494,4 +496,22 @@ function pcm16ToWavBase64(pcm16: Buffer, sampleRate: number): string {
   b.writeUInt32LE(pcm16.length, 40);
   pcm16.copy(b, 44);
   return b.toString('base64');
+}
+
+function isWhisperHallucination(text: string): boolean {
+  const norm = text.trim().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
+  return [
+    'thank you',
+    'thank you very much',
+    'thanks for watching',
+    'thanks for watching please subscribe',
+    'thanks for watching and please subscribe',
+    'you',
+    'bye',
+    'goodbye',
+    'subtitles by',
+    'subscribe',
+    'please subscribe',
+    'thanks for listening',
+  ].includes(norm);
 }

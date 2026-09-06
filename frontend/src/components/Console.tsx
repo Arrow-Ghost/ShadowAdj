@@ -8,15 +8,44 @@ import { clock } from '@/lib/format';
 import Sphere from './Sphere';
 import MetricRail from './MetricRail';
 import Timeline from './Timeline';
+import ConsentVisualizer3D from './ConsentVisualizer3D';
+import MicTester from './MicTester';
 
-const MODES: { id: SessionMode; title: string; blurb: string }[] = [
-  { id: 'debate-practice', title: 'Debate practice', blurb: 'Rounds, rebuttals, and speaker drills.' },
-  { id: 'interview-prep', title: 'Interview prep', blurb: 'Rehearse answers and review your delivery.' },
-  { id: 'speech-coaching', title: 'Speech coaching', blurb: 'Presentations, toasts, talks.' },
+const MODES: { id: SessionMode; title: string; blurb: string; icon: string; tag: string }[] = [
+  {
+    id: 'debate-practice',
+    title: 'Debate Practice',
+    blurb: 'Rounds, clashes, rebuttals, and speaker drills with pace reflection.',
+    icon: '⚔️',
+    tag: 'Competitive',
+  },
+  {
+    id: 'interview-prep',
+    title: 'Interview Prep',
+    blurb: 'Rehearse behavioural answers, structural flow, and filler control.',
+    icon: '🎯',
+    tag: 'Executive',
+  },
+  {
+    id: 'speech-coaching',
+    title: 'Speech Coaching',
+    blurb: 'Keynotes, toasts, presentations, and oratory cadence mastery.',
+    icon: '🎙️',
+    tag: 'Rhetoric',
+  },
+];
+
+const LANGUAGE_PRESETS = [
+  { code: '', label: 'English (Default)' },
+  { code: 'hi', label: 'Hindi (hi)' },
+  { code: 'es', label: 'Spanish (es)' },
+  { code: 'fr', label: 'French (fr)' },
+  { code: 'de', label: 'German (de)' },
+  { code: 'zh', label: 'Mandarin (zh)' },
 ];
 
 const METRIC_KEYS = ['pace', 'pauses', 'fillers', 'vocabulary', 'delivery', 'latency'] as const;
-const PREF_KEY = 'shadowadj.prefs.v1';
+const PREF_KEY = 'shadowadj.prefs.v2';
 
 type Step = 'setup' | 'consent' | 'live' | 'ended';
 
@@ -28,16 +57,18 @@ interface Prefs {
   expectSpeakers: number;
   metrics: Record<string, boolean>;
 }
+
 function defaultPrefs(): Prefs {
   return {
     mode: 'debate-practice',
     label: '',
-    transcriptSource: 'server', // falls back to browser when no Gemini key
+    transcriptSource: 'server',
     languages: '',
     expectSpeakers: 1,
     metrics: Object.fromEntries(METRIC_KEYS.map((k) => [k, true])),
   };
 }
+
 function loadPrefs(): Prefs {
   try {
     return { ...defaultPrefs(), ...(JSON.parse(localStorage.getItem(PREF_KEY) || '{}') as Partial<Prefs>) };
@@ -56,6 +87,8 @@ export default function Console() {
     defaultTranscription?: 'server' | 'browser';
   } | null>(null);
   const [consent, setConsent] = useState({ speaker: false, second: false });
+  const [testAudioLevel, setTestAudioLevel] = useState(0);
+  const [testAnalyser, setTestAnalyser] = useState<AnalyserNode | null>(null);
   const [finalizing, setFinalizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [coaching, setCoaching] = useState<{ notes: string; loading: boolean; error: string | null }>({
@@ -74,18 +107,23 @@ export default function Console() {
   const stopSpeechRef = useRef<() => void>(() => {});
   const exportRef = useRef<any>(null);
   const startedAtRef = useRef<number>(0);
+  const transcriptBottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    transcriptBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [store.snapshot?.transcript.text, store.transcriptLive]);
 
   useEffect(() => {
     getHealth()
       .then(setHealth)
-      .catch(() => setError('Backend not reachable on :8787 — is it running?'));
+      .catch(() => setError('Backend not reachable on :8787 — ensure backend service is running.'));
   }, []);
 
   useEffect(() => {
     localStorage.setItem(PREF_KEY, JSON.stringify(prefs));
   }, [prefs]);
 
-  useEffect(() => () => teardown(), []); // unmount safety
+  useEffect(() => () => teardown(), []);
 
   function teardown() {
     captureRef.current?.stop();
@@ -107,6 +145,7 @@ export default function Console() {
         consent: { speakerAcknowledged: consent.speaker, secondPartyAcknowledged: consent.second },
         languages: languages.length ? languages : undefined,
         expectSpeakers: prefs.expectSpeakers > 1 ? prefs.expectSpeakers : undefined,
+        transcriptSource: useServer ? 'server' : 'browser',
       });
       store.reset();
       store.set({ status: 'connecting', sessionId: s.id, label: s.label });
@@ -130,13 +169,26 @@ export default function Console() {
             ],
           });
         }
+      } else {
+        // In server mode, if the browser supports SpeechRecognition, run it in parallel for zero-latency interim live preview
+        if (browserSpeechSupported()) {
+          stopSpeechRef.current?.();
+          stopSpeechRef.current = startBrowserSpeech({
+            onResult: (text, isFinal) => {
+              if (!isFinal && text) {
+                store.set({ transcriptLive: text });
+              }
+            },
+            onError: () => {},
+          });
+        }
       }
 
       startedAtRef.current = Date.now();
       store.set({ status: 'live' });
       setStep('live');
     } catch (e: any) {
-      setError(e.message || 'could not start');
+      setError(e.message || 'Could not initialize session capture');
       teardown();
     }
   }
@@ -145,10 +197,31 @@ export default function Console() {
     stopSpeechRef.current?.();
     stopSpeechRef.current = startBrowserSpeech({
       onResult: (text, isFinal) => {
+        if (!text) return;
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: 'transcript', text, isFinal }));
         }
-        store.set({ transcriptLive: isFinal ? '' : text });
+        if (isFinal) {
+          store.set((state) => {
+            const current = state.snapshot?.transcript.text || '';
+            const updated = current ? `${current} ${text}` : text;
+            return {
+              snapshot: state.snapshot
+                ? {
+                    ...state.snapshot,
+                    transcript: {
+                      ...state.snapshot.transcript,
+                      text: updated,
+                      wordCount: updated.split(/\s+/).filter(Boolean).length,
+                    },
+                  }
+                : null,
+              transcriptLive: '',
+            };
+          });
+        } else {
+          store.set({ transcriptLive: text });
+        }
       },
       onError: (e) => store.set({ notices: [...useConsole.getState().notices, e] }),
     });
@@ -157,8 +230,31 @@ export default function Console() {
   function onSocketMessage(msg: any) {
     if (msg.type === 'tick') {
       store.set({ snapshot: msg.snapshot, energy: msg.energy, transcribing: Boolean(msg.transcribing) });
-    } else if (msg.type === 'transcript' && msg.source === 'server') {
-      store.set({ transcriptLive: '' }); // transcript text arrives via the next tick snapshot
+    } else if (msg.type === 'transcript') {
+      if (msg.text && msg.isFinal) {
+        store.set((state) => {
+          const current = state.snapshot?.transcript.text || '';
+          if (current.endsWith(msg.text) || current.includes(msg.text)) {
+            return { transcriptLive: '' };
+          }
+          const updated = current ? `${current} ${msg.text}` : msg.text;
+          return {
+            snapshot: state.snapshot
+              ? {
+                  ...state.snapshot,
+                  transcript: {
+                    ...state.snapshot.transcript,
+                    text: updated,
+                    wordCount: updated.split(/\s+/).filter(Boolean).length,
+                  },
+                }
+              : null,
+            transcriptLive: '',
+          };
+        });
+      } else {
+        store.set({ transcriptLive: '' });
+      }
     } else if (msg.type === 'transcription-fallback') {
       store.set({ notices: [...useConsole.getState().notices, msg.message] });
       const sock = captureRef.current?.socket;
@@ -170,10 +266,11 @@ export default function Console() {
     }
   }
 
-  function markQuestion() {
+  function sendTimelineTag(kind: 'question' | 'clash' | 'poi' | 'rebuttal', labelPrefix: string) {
     const sock = captureRef.current?.socket;
     if (sock?.readyState === WebSocket.OPEN) {
-      sock.send(JSON.stringify({ type: 'question', label: `Q${(store.snapshot?.timeline.filter((t) => t.kind === 'question').length ?? 0) + 1}` }));
+      const count = (store.snapshot?.timeline.filter((t) => t.kind === kind).length ?? 0) + 1;
+      sock.send(JSON.stringify({ type: 'question', label: `${labelPrefix}${count}` }));
     }
   }
 
@@ -183,12 +280,11 @@ export default function Console() {
     setFinalizing(true);
     stopSpeechRef.current?.();
 
-    // Let the backend transcribe the trailing audio before we snapshot.
     let finalExport: any = null;
     try {
       finalExport = await (captureRef.current?.finish(8000) ?? Promise.resolve(null));
     } catch {
-      /* fall back to the last live snapshot */
+      /* fallback */
     }
     captureRef.current = null;
     setFinalizing(false);
@@ -219,7 +315,7 @@ export default function Console() {
     try {
       saveHistory(entry);
     } catch {
-      /* localStorage might be full/blocked */
+      /* safe fallback */
     }
   }
 
@@ -247,92 +343,198 @@ export default function Console() {
 
   const serverAvailable = Boolean(health?.geminiEnabled);
 
-  /* ----------------------------- render ----------------------------- */
-
+  /* ----------------------------- STEP 1: SETUP ----------------------------- */
   if (step === 'setup') {
     return (
-      <Shell>
-        <h1 className="text-2xl font-bold">Start a session</h1>
-        <p className="mt-1 text-sm text-white/50">
-          ShadowADJ shows how an answer <em>sounds</em> — pace, pauses, filler words, vocabulary variety.
-          It never scores the speaker or guesses whether an answer was AI-assisted.
+      <div className="mx-auto max-w-4xl px-4 py-8">
+        {/* Top Header Badge */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div className="inline-flex items-center gap-2 rounded-full border border-cyan/30 bg-cyan/10 px-3.5 py-1 text-xs font-semibold text-cyan">
+            <span className="h-2 w-2 rounded-full bg-cyan animate-ping" />
+            <span>SESSION CONFIGURATION // HUD</span>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-white/40">Backend Engine:</span>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-mono text-[11px] font-semibold ${
+              serverAvailable ? 'border border-mint/40 bg-mint/10 text-mint' : 'border border-amber/40 bg-amber/10 text-amber'
+            }`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${serverAvailable ? 'bg-mint' : 'bg-amber'}`} />
+              {serverAvailable ? `${health?.provider?.toUpperCase() || 'SERVER AI'} (${health?.model || 'ONLINE'})` : 'OFFLINE / BROWSER FALLBACK'}
+            </span>
+          </div>
+        </div>
+
+        <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
+          Initialize <span className="bg-gradient-to-r from-cyan to-mint bg-clip-text text-transparent">Telemetry Console</span>
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-white/60 max-w-2xl">
+          ShadowADJ captures speech cadence, pauses, filler distribution, and vocabulary depth in real time.
+          Configure your session parameters before authenticating audio access.
         </p>
+
         {error && <Banner tone="rose">{error}</Banner>}
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-3">
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setPrefs((p) => ({ ...p, mode: m.id }))}
-              className={`glass p-4 text-left transition ${prefs.mode === m.id ? 'ring-2 ring-cyan/60' : 'opacity-80 hover:opacity-100'}`}
-            >
-              <div className="font-semibold">{m.title}</div>
-              <div className="mt-1 text-xs text-white/45">{m.blurb}</div>
-            </button>
-          ))}
+        {/* Mode Selector Cards */}
+        <div className="mt-8">
+          <label className="metric-label block mb-3 text-cyan/80">Select Practice Mode</label>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {MODES.map((m) => {
+              const active = prefs.mode === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setPrefs((p) => ({ ...p, mode: m.id }))}
+                  className={`glass relative p-5 text-left transition-all duration-200 ease-pop ${
+                    active
+                      ? 'border-cyan/70 bg-gradient-to-br from-cyan/15 via-slate-900/80 to-mint/10 shadow-[0_0_25px_rgba(0,212,255,0.25)] ring-1 ring-cyan/50'
+                      : 'border-white/10 hover:border-white/20 hover:bg-white/[0.03] opacity-80 hover:opacity-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-2xl">{m.icon}</span>
+                    <span className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-semibold uppercase ${
+                      active ? 'bg-cyan/20 text-cyan border border-cyan/40' : 'bg-white/5 text-white/40'
+                    }`}>
+                      {m.tag}
+                    </span>
+                  </div>
+                  <div className="font-bold text-white text-base">{m.title}</div>
+                  <div className="mt-1.5 text-xs text-white/50 leading-relaxed">{m.blurb}</div>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <label className="mt-5 block">
-          <span className="metric-label">Session label (optional)</span>
+        {/* Session Metadata Grid */}
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          {/* Label Input */}
+          <div className="glass p-5">
+            <span className="metric-label block mb-2">Round / Session Identifier</span>
+            <input
+              value={prefs.label}
+              onChange={(e) => setPrefs((p) => ({ ...p, label: e.target.value }))}
+              placeholder="e.g. Finals — 1st Opposition Rebuttal"
+              className="w-full rounded-xl border border-white/10 bg-black/40 px-3.5 py-2.5 text-sm text-white placeholder-white/30 outline-none transition focus:border-cyan/60 focus:shadow-[0_0_15px_rgba(0,212,255,0.2)]"
+            />
+            <p className="mt-2 text-[11px] text-white/40">Optional tag used when generating audit logs and CSV exports.</p>
+          </div>
+
+          {/* Speaker Count Counter */}
+          <div className="glass p-5">
+            <span className="metric-label block mb-2">Expected Debaters / Speakers</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center rounded-xl border border-white/10 bg-black/40 p-1">
+                <button
+                  type="button"
+                  onClick={() => setPrefs((p) => ({ ...p, expectSpeakers: Math.max(1, p.expectSpeakers - 1) }))}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-white hover:bg-white/10 transition active:scale-95"
+                >
+                  -
+                </button>
+                <span className="w-12 text-center font-mono text-base font-bold text-cyan">
+                  {prefs.expectSpeakers}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPrefs((p) => ({ ...p, expectSpeakers: Math.min(8, p.expectSpeakers + 1) }))}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-white hover:bg-white/10 transition active:scale-95"
+                >
+                  +
+                </button>
+              </div>
+              <span className="text-xs text-white/50">
+                {prefs.expectSpeakers > 1 ? 'Multi-speaker turn diarization active' : 'Solo speaker practice profile'}
+              </span>
+            </div>
+            <p className="mt-2 text-[11px] text-white/40">Multi-speaker tracks individual turn timestamps & clashes.</p>
+          </div>
+        </div>
+
+        {/* Language Target Selector */}
+        <div className="glass mt-4 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <span className="metric-label">Spoken Languages &amp; Gloss</span>
+            <span className="text-[11px] text-white/40">Multilingual audio is glossed into English automatically</span>
+          </div>
+
+          <div className="flex flex-wrap gap-2 mb-3">
+            {LANGUAGE_PRESETS.map((preset) => {
+              const active = prefs.languages === preset.code;
+              return (
+                <button
+                  key={preset.code}
+                  type="button"
+                  onClick={() => setPrefs((p) => ({ ...p, languages: preset.code }))}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                    active
+                      ? 'border-mint/60 bg-mint/15 text-mint shadow-[0_0_12px_rgba(0,255,156,0.2)]'
+                      : 'border-white/10 bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+
           <input
-            value={prefs.label}
-            onChange={(e) => setPrefs((p) => ({ ...p, label: e.target.value }))}
-            placeholder="e.g. Round 3 — rebuttal practice"
-            className="mt-1 w-full rounded-xl border border-stroke bg-black/30 px-3 py-2 text-sm outline-none focus:border-cyan/50"
+            value={prefs.languages}
+            onChange={(e) => setPrefs((p) => ({ ...p, languages: e.target.value }))}
+            placeholder="Custom language codes (e.g. en, hi, es, fr)"
+            className="w-full rounded-xl border border-white/10 bg-black/40 px-3.5 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-cyan/50"
           />
-        </label>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
-          <label className="block">
-            <span className="metric-label">Languages spoken (optional)</span>
-            <input
-              value={prefs.languages}
-              onChange={(e) => setPrefs((p) => ({ ...p, languages: e.target.value }))}
-              placeholder="e.g. en, hi — leave blank for English"
-              className="mt-1 w-full rounded-xl border border-stroke bg-black/30 px-3 py-2 text-sm outline-none focus:border-cyan/50"
-            />
-          </label>
-          <label className="block">
-            <span className="metric-label">Speakers</span>
-            <input
-              type="number"
-              min={1}
-              max={8}
-              value={prefs.expectSpeakers}
-              onChange={(e) => setPrefs((p) => ({ ...p, expectSpeakers: Math.max(1, Number(e.target.value) || 1) }))}
-              className="mt-1 w-20 rounded-xl border border-stroke bg-black/30 px-3 py-2 text-sm outline-none focus:border-cyan/50"
-            />
-          </label>
         </div>
-        <p className="mt-1 text-xs text-white/40">
-          Naming a non-English language (or more than one speaker) switches transcription to
-          multilingual mode — the original is kept, with an English gloss available for judges.
-        </p>
 
-        <div className="mt-5">
-          <span className="metric-label">Transcription</span>
-          <div className="mt-2 flex gap-2">
-            <Toggle
-              active={prefs.transcriptSource === 'server'}
+        {/* Transcription Engine Options */}
+        <div className="glass mt-4 p-5">
+          <span className="metric-label block mb-2">Speech Recognition Pipeline</span>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
               disabled={!serverAvailable}
               onClick={() => serverAvailable && setPrefs((p) => ({ ...p, transcriptSource: 'server' }))}
+              className={`rounded-xl border p-3.5 text-left transition ${
+                prefs.transcriptSource === 'server'
+                  ? 'border-cyan/60 bg-cyan/10 ring-1 ring-cyan/40 text-white'
+                  : 'border-white/10 bg-black/30 text-white/60 hover:border-white/20'
+              } disabled:cursor-not-allowed disabled:opacity-40`}
             >
-              Server AI {health?.provider ? `(${health.provider} - ${health.model || ''})` : health?.model ? `(${health.model})` : ''}{!serverAvailable && ' — no key set'}
-              {serverAvailable && ' · recommended'}
-            </Toggle>
-            <Toggle active={prefs.transcriptSource === 'browser'} onClick={() => setPrefs((p) => ({ ...p, transcriptSource: 'browser' }))}>
-              Browser Web Speech
-            </Toggle>
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm text-cyan">⚡ Server AI Transport</span>
+                <span className="font-mono text-[10px] text-mint">RECOMMENDED</span>
+              </div>
+              <p className="mt-1 text-xs text-white/50">
+                Low-latency cloud model ({health?.provider?.toUpperCase() || 'GEMINI'}/{health?.model || 'FLASH'}). Works on all browsers.
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPrefs((p) => ({ ...p, transcriptSource: 'browser' }))}
+              className={`rounded-xl border p-3.5 text-left transition ${
+                prefs.transcriptSource === 'browser'
+                  ? 'border-cyan/60 bg-cyan/10 ring-1 ring-cyan/40 text-white'
+                  : 'border-white/10 bg-black/30 text-white/60 hover:border-white/20'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm text-white">🌐 Browser Web Speech</span>
+                <span className="font-mono text-[10px] text-white/40">CHROME ONLY</span>
+              </div>
+              <p className="mt-1 text-xs text-white/50">
+                Local on-device browser recognition API. No API key required.
+              </p>
+            </button>
           </div>
-          <p className="mt-1.5 text-xs text-white/40">
-            Server AI transcription runs on the backend and works in any browser. Web Speech is
-            Chrome-only and silently does nothing elsewhere (e.g. Opera, Firefox).
-          </p>
         </div>
 
-        <div className="mt-5">
-          <span className="metric-label">Metrics to show</span>
-          <div className="mt-2 flex flex-wrap gap-2">
+        {/* Telemetry Metrics To Track */}
+        <div className="glass mt-4 p-5">
+          <span className="metric-label block mb-2">Live Telemetry Metrics</span>
+          <div className="flex flex-wrap gap-2">
             {METRIC_KEYS.map((k) => (
               <Toggle
                 key={k}
@@ -345,154 +547,422 @@ export default function Console() {
           </div>
         </div>
 
-        <button className="btn btn-primary mt-7" onClick={() => setStep('consent')}>
-          Continue to consent →
-        </button>
-      </Shell>
+        {/* Next Step Action Button */}
+        <div className="mt-8 flex justify-end">
+          <button
+            type="button"
+            className="btn btn-primary text-sm px-6 py-3 shadow-[0_0_25px_rgba(0,212,255,0.35)]"
+            onClick={() => setStep('consent')}
+          >
+            Proceed to Biometric Consent &amp; Verification →
+          </button>
+        </div>
+      </div>
     );
   }
 
+  /* ----------------------------- STEP 2: CONSENT (NEXT-GEN 3D HUD) ----------------------------- */
   if (step === 'consent') {
     return (
-      <Shell>
-        <h1 className="text-2xl font-bold">Consent</h1>
-        <div className="glass mt-4 space-y-3 p-5 text-sm text-white/70">
-          <p>During this session ShadowADJ will:</p>
-          <ul className="list-disc space-y-1 pl-5 text-white/60">
-            <li>capture microphone audio and stream it to the local backend for analysis;</li>
-            <li>show live metrics and a transcript on this screen — the same screen everyone in the room sees;</li>
-            <li>keep audio in memory only and discard it when the session ends (no audio file is written).</li>
-          </ul>
-          <p className="text-white/60">
-            It will <strong>not</strong> produce a risk score, a “review” verdict, or an estimate of whether
-            answers were AI-assisted.
-          </p>
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        {/* Top Header Badge */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <div className="inline-flex items-center gap-2 rounded-full border border-mint/30 bg-mint/10 px-3.5 py-1 text-xs font-semibold text-mint">
+            <span className="h-2 w-2 rounded-full bg-mint animate-pulse" />
+            <span>ETHICAL AUDIT &amp; AUDIO CONSENT PROTOCOL</span>
+          </div>
+
+          <div className="font-mono text-xs text-white/50">
+            MODE: <span className="text-cyan font-bold uppercase">{prefs.mode}</span> · SPEAKERS: <span className="text-white">{prefs.expectSpeakers}</span>
+          </div>
         </div>
 
-        {error && <Banner tone="rose">{error}</Banner>}
+        <div className="grid gap-6 lg:grid-cols-[1.1fr_1.3fr]">
+          {/* Left Column: 3D Holographic WebGL Integrity Node & Mode Card */}
+          <div className="flex flex-col gap-4">
+            <div className="h-[360px] w-full">
+              <ConsentVisualizer3D
+                consentGranted={consent.speaker}
+                audioLevel={testAudioLevel}
+                analyser={testAnalyser}
+              />
+            </div>
 
-        <label className="mt-5 flex items-start gap-3 text-sm">
-          <input type="checkbox" className="mt-1" checked={consent.speaker} onChange={(e) => setConsent((c) => ({ ...c, speaker: e.target.checked }))} />
-          <span>
-            I am the person being recorded (or I am setting this up on their behalf with their agreement), and
-            I consent to this session. <span className="text-rose">Required.</span>
-          </span>
-        </label>
-        <label className="mt-3 flex items-start gap-3 text-sm">
-          <input type="checkbox" className="mt-1" checked={consent.second} onChange={(e) => setConsent((c) => ({ ...c, second: e.target.checked }))} />
-          <span>A coach / interviewer is also present and has acknowledged the above. (Optional)</span>
-        </label>
+            {/* Session Config Recap Box */}
+            <div className="glass p-4">
+              <div className="flex items-center justify-between text-xs mb-2">
+                <span className="metric-label">Target Session Profile</span>
+                <span className="text-mint font-mono text-[11px]">READY FOR AUTH</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg bg-black/30 border border-white/5 p-2.5">
+                  <div className="text-white/40 text-[10px]">MODE</div>
+                  <div className="font-semibold text-white mt-0.5">{MODES.find((m) => m.id === prefs.mode)?.title}</div>
+                </div>
+                <div className="rounded-lg bg-black/30 border border-white/5 p-2.5">
+                  <div className="text-white/40 text-[10px]">PIPELINE</div>
+                  <div className="font-semibold text-cyan mt-0.5 capitalize">{prefs.transcriptSource} AI</div>
+                </div>
+              </div>
+            </div>
 
-        <div className="mt-7 flex gap-3">
-          <button className="btn" onClick={() => setStep('setup')}>
-            ← Back
-          </button>
-          <button className="btn btn-primary disabled:opacity-40" disabled={!consent.speaker} onClick={beginSession}>
-            Grant mic &amp; start
-          </button>
+            {/* Pre-Flight Live Microphone Check */}
+            <MicTester
+              onAudioLevel={(lvl) => setTestAudioLevel(lvl)}
+              onAnalyserCreated={(analyser) => setTestAnalyser(analyser)}
+            />
+          </div>
+
+          {/* Right Column: Security Protocol Pillars & Biometric Checkers */}
+          <div className="flex flex-col justify-between space-y-4">
+            {/* Protocol Pillars */}
+            <div className="space-y-3">
+              <div className="glass p-4 transition hover:border-cyan/30">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan/40 bg-cyan/10 text-cyan">
+                    🛡️
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-sm text-white">Ephemeral RAM Audio Stream</h3>
+                    <p className="mt-1 text-xs text-white/60 leading-relaxed">
+                      Microphone audio is captured via 16 kHz PCM AudioWorklet, streamed to the local backend solely for feature extraction, and <strong>instantly discarded from volatile memory</strong> when the session terminates. No permanent WAV/MP3 files are ever recorded.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass p-4 transition hover:border-mint/30">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-mint/40 bg-mint/10 text-mint">
+                    ⚖️
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-sm text-white">Pure Linguistic Telemetry · No Automated Verdicts</h3>
+                    <p className="mt-1 text-xs text-white/60 leading-relaxed">
+                      ShadowADJ extracts objective acoustic signals (WPM pacing, pause duration, MATTR vocabulary depth, filler count). It <strong>never issues automated cheating scores</strong> or replaces the authority of human adjudicators.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass p-4 transition hover:border-amber/30">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber/40 bg-amber/10 text-amber">
+                    👁️
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-sm text-white">Mutual Glass Transparency</h3>
+                    <p className="mt-1 text-xs text-white/60 leading-relaxed">
+                      All live metrics and transcript logs are projected on this exact shared HUD. Every debater, adjudicator, and coach sees identical real-time telemetry with full auditability.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {error && <Banner tone="rose">{error}</Banner>}
+
+            {/* Interactive Agreement Checklist */}
+            <div className="space-y-3 pt-2">
+              {/* Primary Speaker Consent */}
+              <div
+                onClick={() => setConsent((c) => ({ ...c, speaker: !c.speaker }))}
+                className={`glass cursor-pointer p-4 transition-all duration-200 ${
+                  consent.speaker
+                    ? 'border-mint/60 bg-mint/[0.07] ring-1 ring-mint/40 shadow-[0_0_20px_rgba(0,255,156,0.15)]'
+                    : 'border-white/10 hover:border-white/20'
+                }`}
+              >
+                <div className="flex items-start gap-3.5">
+                  <div
+                    className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition ${
+                      consent.speaker
+                        ? 'border-mint bg-mint text-slate-950 font-bold shadow-[0_0_10px_#00ff9c]'
+                        : 'border-white/30 bg-black/40'
+                    }`}
+                  >
+                    {consent.speaker && '✓'}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white">Primary Speaker Authorization</span>
+                      <span
+                        className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded ${
+                          consent.speaker ? 'bg-mint/20 text-mint border border-mint/40' : 'bg-rose/20 text-rose border border-rose/40'
+                        }`}
+                      >
+                        {consent.speaker ? 'VERIFIED' : 'REQUIRED'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-white/60 leading-relaxed">
+                      I confirm that I am the active debater (or authorized setup facilitator) and formally consent to live speech telemetry extraction for this round.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Coach / Second Party Optional Acknowledgment */}
+              <div
+                onClick={() => setConsent((c) => ({ ...c, second: !c.second }))}
+                className={`glass cursor-pointer p-4 transition-all duration-200 ${
+                  consent.second
+                    ? 'border-cyan/60 bg-cyan/[0.07] ring-1 ring-cyan/40 shadow-[0_0_20px_rgba(0,212,255,0.15)]'
+                    : 'border-white/10 hover:border-white/20 opacity-80 hover:opacity-100'
+                }`}
+              >
+                <div className="flex items-start gap-3.5">
+                  <div
+                    className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition ${
+                      consent.second
+                        ? 'border-cyan bg-cyan text-slate-950 font-bold shadow-[0_0_10px_#00d4ff]'
+                        : 'border-white/30 bg-black/40'
+                    }`}
+                  >
+                    {consent.second && '✓'}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white">Adjudicator / Coach Co-Sign</span>
+                      <span className="font-mono text-[10px] bg-white/10 text-white/60 px-2 py-0.5 rounded">
+                        OPTIONAL
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-white/60 leading-relaxed">
+                      An adjudicator, coach, or peer observer is present in the room and acknowledges the telemetry parameters.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Navigation & Action Launch Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-white/10">
+              <button
+                type="button"
+                className="btn text-xs px-4 py-2.5"
+                onClick={() => setStep('setup')}
+              >
+                ← Back to Configuration
+              </button>
+
+              <button
+                type="button"
+                disabled={!consent.speaker}
+                onClick={beginSession}
+                className={`btn text-sm px-7 py-3 font-bold transition-all duration-300 ${
+                  consent.speaker
+                    ? 'btn-mint shadow-[0_0_30px_rgba(0,255,156,0.5)] animate-pulse'
+                    : 'opacity-40 cursor-not-allowed border-white/10 bg-white/5 text-white/40'
+                }`}
+              >
+                {consent.speaker ? '🚀 Authorize Mic & Launch Console' : '🔒 Check Required Consent Above'}
+              </button>
+            </div>
+          </div>
         </div>
-      </Shell>
+      </div>
     );
   }
 
-  // live + ended share the dashboard chrome
+  /* ----------------------------- STEP 3 & 4: LIVE & ENDED CONSOLE ----------------------------- */
   const snap = store.snapshot;
+
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${step === 'live' ? 'animate-pulse bg-mint' : 'bg-white/30'}`} />
-            <h1 className="text-lg font-semibold">{store.label || 'Session'}</h1>
-            <span className="font-mono text-sm text-white/40">{clock(snap?.elapsedMs ?? 0)}</span>
+    <div className="mx-auto max-w-7xl px-4 py-6">
+      {/* Top Telemetry HUD Ticker */}
+      <div className="mb-5 rounded-2xl border border-white/10 bg-slate-950/70 p-4 backdrop-blur-2xl">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2.5">
+              <span className={`inline-block h-3 w-3 rounded-full ${
+                step === 'live' ? 'animate-pulse bg-mint shadow-[0_0_12px_#00ff9c]' : 'bg-white/30'
+              }`} />
+              <div>
+                <h1 className="text-lg font-bold text-white flex items-center gap-2">
+                  {store.label || 'Debate Session Telemetry'}
+                  <span className="font-mono text-xs font-normal text-cyan bg-cyan/10 border border-cyan/30 px-2 py-0.5 rounded-full">
+                    {MODES.find((m) => m.id === prefs.mode)?.title || 'Live'}
+                  </span>
+                </h1>
+                <p className="text-[11px] text-white/40 font-mono">
+                  PIPE: {snap?.transcript.source === 'server'
+                    ? `${health?.provider ? health.provider.toUpperCase() : 'SERVER AI'}${health?.model ? ` (${health.model})` : ''}`
+                    : snap?.transcript.source === 'browser'
+                      ? 'BROWSER WEB SPEECH'
+                      : 'PCM 16KHZ WORKLET'}
+                  {store.transcribing && <span className="ml-1.5 text-cyan animate-pulse">● AI TRANSCRIBING</span>}
+                </p>
+              </div>
+            </div>
           </div>
-          <p className="mt-0.5 text-xs text-white/40">
-            {MODES.find((m) => m.id === prefs.mode)?.title} · transcript:{' '}
-            {snap?.transcript.source === 'server'
-              ? `${health?.provider ? health.provider.toUpperCase() : 'Server'}${health?.model ? ` (${health.model})` : ''}`
-              : snap?.transcript.source === 'browser'
-                ? 'browser Web Speech'
-                : '…'}
-            {store.transcribing && <span className="ml-1 text-cyan">· transcribing…</span>}
-          </p>
+
+          {/* Real-time Clock & Status Indicators */}
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="font-mono text-xl font-bold tracking-wider text-mint">
+                {clock(snap?.elapsedMs ?? 0)}
+              </div>
+              <div className="font-mono text-[10px] text-white/40 uppercase">
+                ELAPSED SESSION TIME
+              </div>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex items-center gap-2">
+              {step === 'live' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => sendTimelineTag('question', 'Q')}
+                    className="btn !px-3 !py-2 text-xs border-cyan/40 bg-cyan/10 text-cyan hover:bg-cyan/20"
+                    title="Timestamp a question asked in this debate round"
+                  >
+                    ❓ Mark Question
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendTimelineTag('clash', 'CLASH-')}
+                    className="btn !px-3 !py-2 text-xs border-amber/40 bg-amber/10 text-amber hover:bg-amber/20"
+                    title="Timestamp an argument clash"
+                  >
+                    ⚔️ Clash
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendTimelineTag('poi', 'POI-')}
+                    className="btn !px-3 !py-2 text-xs border-mint/40 bg-mint/10 text-mint hover:bg-mint/20"
+                    title="Timestamp a Point of Information"
+                  >
+                    ✋ POI
+                  </button>
+                  <button
+                    type="button"
+                    onClick={endSession}
+                    className="btn btn-danger !px-4 !py-2 text-xs font-bold shadow-[0_0_15px_rgba(255,92,122,0.4)]"
+                  >
+                    ⏹ End Session
+                  </button>
+                </>
+              )}
+
+              {step === 'ended' && (
+                <>
+                  {finalizing && <span className="text-xs text-cyan animate-pulse">Finalizing transcript telemetry…</span>}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      store.reset();
+                      setStep('setup');
+                      setCoaching({ notes: '', loading: false, error: null });
+                      setIntegrity({ data: null, loading: false, error: null });
+                    }}
+                    className="btn btn-primary !px-4 !py-2 text-xs font-bold"
+                  >
+                    + New Session
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="flex gap-2">
-          {step === 'live' && (
-            <>
-              <button className="btn" onClick={markQuestion}>
-                Mark “question asked”
-              </button>
-              <button className="btn border-rose/40 bg-rose/10 text-rose hover:bg-rose/20" onClick={endSession}>
-                End session
-              </button>
-            </>
-          )}
-          {step === 'ended' && (
-            <>
-              {finalizing && <span className="self-center text-xs text-cyan">Finalizing transcript…</span>}
-              <button
-                className="btn"
-                onClick={() => {
-                  store.reset();
-                  setStep('setup');
-                  setCoaching({ notes: '', loading: false, error: null });
-                }}
-              >
-                New session
-              </button>
-            </>
-          )}
-        </div>
-      </header>
+      </div>
 
       {store.notices.length > 0 && (
         <Banner tone="amber">{store.notices[store.notices.length - 1]}</Banner>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <div className="glass relative min-h-[340px] overflow-hidden p-0">
-          <Sphere analyser={captureRef.current?.analyser ?? null} descriptor={(snap?.pace.descriptor as any) ?? null} live={step === 'live'} />
-          <div className="pointer-events-none absolute left-4 top-4 text-xs text-white/45">
-            colour = pace ({snap?.pace.descriptor ?? '—'}) · size = live volume
+      {/* Main 3D Sphere & Real-time Metrics Grid */}
+      <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+        <div className="glass relative min-h-[380px] overflow-hidden p-0 border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.6)]">
+          <Sphere
+            analyser={captureRef.current?.analyser ?? null}
+            descriptor={(snap?.pace.descriptor as any) ?? null}
+            live={step === 'live'}
+          />
+
+          <div className="pointer-events-none absolute top-4 left-4 flex items-center gap-2 font-mono text-[10px] text-cyan/70">
+            <span className="inline-block h-2 w-2 rounded-full bg-cyan animate-ping" />
+            <span>3D ACOUSTIC SPEECH LATTICE</span>
+          </div>
+
+          <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex items-center justify-between font-mono text-[10px] text-white/40">
+            <span>
+              PACE: <strong className="text-white uppercase">{snap?.pace.descriptor ?? 'IDLE'}</strong> · COLOR GRADIENT DRIVEN BY CADENCE
+            </span>
+            <span>SIZE = REALTIME FFT VOLUME</span>
           </div>
         </div>
+
         <MetricRail snapshot={snap} enabled={{ ...prefs.metrics }} />
       </div>
 
+      {/* Real-time Timeline Wave */}
       <div className="mt-4">
         <Timeline energy={store.energy} snapshot={snap} />
       </div>
 
+      {/* Transcript & Self-Review / Coaching Panels */}
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {/* Live Multilingual Transcript Box */}
         <div className="glass p-5">
-          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-white/80">
-            Transcript
-            {store.transcribing && <span className="text-[11px] font-normal text-cyan">Gemini transcribing…</span>}
-          </h3>
-          <div className="max-h-64 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-white/75">
-            {snap?.transcript.text || (
-              <span className="text-white/30">
-                {step === 'live' ? 'Listening… first transcript lands a few seconds in.' : 'No transcript.'}
+          <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+              <span>📝 Live Speech Transcript</span>
+              {store.transcribing && <span className="font-mono text-[10px] text-cyan animate-pulse">● TRANSCRIBING…</span>}
+              {step === 'live' && (
+                <span className="font-mono text-[10px] text-mint/80 flex items-center gap-1">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-mint animate-pulse" /> LIVE MIC
+                </span>
+              )}
+            </h3>
+            <span className="font-mono text-[11px] text-white/40">
+              {snap?.transcript.wordCount ?? 0} words
+            </span>
+          </div>
+
+          <div className="max-h-72 min-h-[140px] overflow-y-auto whitespace-pre-wrap font-sans text-sm leading-relaxed text-white/80 p-3 rounded-xl bg-black/25 border border-white/10 shadow-inner">
+            {snap?.transcript.text ? (
+              <>
+                <span>{snap.transcript.text}</span>
+                {store.transcriptLive && (
+                  <span className="text-cyan font-medium animate-pulse"> {store.transcriptLive}</span>
+                )}
+              </>
+            ) : store.transcriptLive ? (
+              <span className="text-cyan font-medium animate-pulse">{store.transcriptLive}</span>
+            ) : (
+              <span className="text-white/30 italic flex items-center gap-2">
+                {step === 'live' ? (
+                  <>
+                    <span className="inline-block h-2 w-2 rounded-full bg-cyan/60 animate-ping" />
+                    Listening… speak into your mic to see real-time transcription.
+                  </>
+                ) : (
+                  'No transcript recorded.'
+                )}
               </span>
             )}
-            {store.transcriptLive && <span className="text-white/35"> {store.transcriptLive}</span>}
+            <div ref={transcriptBottomRef} />
           </div>
         </div>
 
+        {/* Self-Review & Coaching Notes */}
         <div className="glass p-5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white/80">Self-review</h3>
+          <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
+            <h3 className="text-sm font-semibold text-white">🎯 Coaching Insights &amp; Export</h3>
             {step === 'ended' && (
               <div className="flex gap-2">
                 <button
-                  className="btn !px-3 !py-1 text-xs"
-                  onClick={() => download(`${store.label || 'session'}.json`, JSON.stringify(exportRef.current, null, 2))}
+                  type="button"
+                  className="btn !px-2.5 !py-1 text-xs"
+                  onClick={() => download(`${store.label || 'debate-session'}.json`, JSON.stringify(exportRef.current, null, 2))}
                 >
                   JSON
                 </button>
                 <button
-                  className="btn !px-3 !py-1 text-xs"
-                  onClick={() => download(`${store.label || 'session'}.csv`, toCSV(exportRef.current), 'text/csv')}
+                  type="button"
+                  className="btn !px-2.5 !py-1 text-xs"
+                  onClick={() => download(`${store.label || 'debate-session'}.csv`, toCSV(exportRef.current), 'text/csv')}
                 >
                   CSV
                 </button>
@@ -501,49 +971,71 @@ export default function Console() {
           </div>
 
           {step !== 'ended' ? (
-            <p className="mt-2 text-xs text-white/40">
-              Coaching notes become available when you end the session.
-            </p>
+            <div className="flex flex-col items-center justify-center py-10 text-center text-xs text-white/40">
+              <span className="text-2xl mb-2">⏱️</span>
+              <p>Session in progress. Post-round speech coaching &amp; structure reflection unlock automatically once the round ends.</p>
+            </div>
           ) : serverAvailable ? (
-            <div className="mt-3">
+            <div>
               {!coaching.notes && !coaching.loading && (
-                <button className="btn btn-primary text-xs" onClick={getCoaching}>
-                  Generate coaching notes
+                <button
+                  type="button"
+                  className="btn btn-primary text-xs w-full py-2.5 font-semibold"
+                  onClick={getCoaching}
+                >
+                  ⚡ Generate AI Speech &amp; Delivery Notes
                 </button>
               )}
-              {coaching.loading && <p className="text-xs text-white/50">Thinking through your delivery…</p>}
-              {coaching.error && <Banner tone="rose">{coaching.error}</Banner>}
-              {coaching.notes && (
-                <div className="whitespace-pre-wrap text-sm leading-relaxed text-white/75">{coaching.notes}</div>
+
+              {coaching.loading && (
+                <div className="py-6 text-center text-xs text-cyan animate-pulse">
+                  Analyzing cadence, transition seams, and argumentative structure…
+                </div>
               )}
-              <p className="mt-3 text-[11px] text-white/35">
-                Notes are addressed to you and cover delivery and structure only.
+
+              {coaching.error && <Banner tone="rose">{coaching.error}</Banner>}
+
+              {coaching.notes && (
+                <div className="max-h-64 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-white/80 p-3 rounded-xl bg-black/30 border border-white/5">
+                  {coaching.notes}
+                </div>
+              )}
+
+              <p className="mt-3 text-[11px] text-white/40">
+                Coaching notes evaluate vocal delivery, cadence balance, and clarity without assigning arbitrary point penalties.
               </p>
             </div>
           ) : (
-            <p className="mt-2 text-xs text-white/40">
-              Set <code className="text-white/60">GEMINI_API_KEY</code> to enable written coaching notes. Your
-              metrics and transcript above are still fully available.
+            <p className="text-xs text-white/40">
+              Configure <code className="text-cyan">GEMINI_API_KEY</code> or <code className="text-cyan">GROQ_API_KEY</code> to enable automated speech coaching.
             </p>
           )}
         </div>
       </div>
 
+      {/* Ended Round AI & Plagiarism Integrity Audit */}
       {step === 'ended' && (
         <div className="glass mt-4 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
             <div>
-              <h3 className="text-sm font-semibold text-white/80">AI &amp; Plagiarism Integrity Check</h3>
-              <p className="text-xs text-white/40">Analyze transcript for plagiarism, external source matching, and AI delivery patterns.</p>
+              <h3 className="text-sm font-semibold text-white">🛡️ Source &amp; Linguistic Integrity Audit</h3>
+              <p className="text-xs text-white/40">
+                Cross-references the round transcript against public corpora to surface unattributed external citations and AI phrasing patterns.
+              </p>
             </div>
             {!integrity.data && !integrity.loading && (
-              <button className="btn btn-primary text-xs" onClick={getIntegrity}>
-                Run AI &amp; Plagiarism Check
+              <button type="button" className="btn btn-primary text-xs font-semibold" onClick={getIntegrity}>
+                Run Source &amp; Integrity Check
               </button>
             )}
           </div>
 
-          {integrity.loading && <p className="mt-3 text-xs text-cyan">Scanning web corpus &amp; analyzing speech delivery patterns…</p>}
+          {integrity.loading && (
+            <p className="mt-3 text-xs text-cyan animate-pulse">
+              Scanning external reference corpora &amp; running stylistic variance analysis…
+            </p>
+          )}
+
           {integrity.error && <Banner tone="rose">{integrity.error}</Banner>}
 
           {integrity.data && (
@@ -551,9 +1043,9 @@ export default function Console() {
               {integrity.data.case ? (
                 <>
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-white/60">Risk Level:</span>
+                    <span className="text-xs text-white/60">Risk Evaluation:</span>
                     <span
-                      className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+                      className={`rounded-full border px-3 py-0.5 text-xs font-semibold ${
                         integrity.data.case.riskLevel === 'LOW'
                           ? 'border-mint/40 bg-mint/10 text-mint'
                           : integrity.data.case.riskLevel === 'MODERATE'
@@ -599,16 +1091,16 @@ export default function Console() {
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs text-mint/80">✓ No external source plagiarism detected in this transcript.</p>
+                    <p className="mt-2 text-xs text-mint/80">✓ No unattributed source matches detected in this transcript.</p>
                   )}
                 </>
               ) : integrity.data.analytics ? (
                 <div className="text-xs text-white/70">
-                  <p className="text-mint">✓ Event policy allows AI assistance — recorded as disclosure analytics.</p>
+                  <p className="text-mint">✓ Tournament policy permits AI assistance — logged as disclosure telemetry.</p>
                   <p className="mt-1 text-white/40">Source matches: {integrity.data.analytics.sourceMatchCount}</p>
                 </div>
               ) : (
-                <p className="text-xs text-mint">✓ Transcript checked — clear.</p>
+                <p className="text-xs text-mint">✓ Transcript verified — clean.</p>
               )}
             </div>
           )}
@@ -618,15 +1110,11 @@ export default function Console() {
   );
 }
 
-/* --------------------------- little bits --------------------------- */
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto max-w-2xl px-4 py-10">{children}</div>;
-}
+/* --------------------------- UI Helper Components --------------------------- */
 
 function Banner({ children, tone }: { children: React.ReactNode; tone: 'rose' | 'amber' }) {
   const c = tone === 'rose' ? 'border-rose/40 bg-rose/10 text-rose' : 'border-amber/40 bg-amber/10 text-amber';
-  return <div className={`mt-4 rounded-xl border px-4 py-2 text-sm ${c}`}>{children}</div>;
+  return <div className={`mt-4 rounded-xl border px-4 py-2.5 text-sm ${c}`}>{children}</div>;
 }
 
 function Toggle({
@@ -642,10 +1130,13 @@ function Toggle({
 }) {
   return (
     <button
+      type="button"
       disabled={disabled}
       onClick={onClick}
       className={`rounded-lg border px-3 py-1.5 text-xs capitalize transition ${
-        active ? 'border-cyan/60 bg-cyan/10 text-cyan' : 'border-stroke text-white/55 hover:text-white/80'
+        active
+          ? 'border-cyan/60 bg-cyan/15 text-cyan shadow-[0_0_10px_rgba(0,212,255,0.2)]'
+          : 'border-white/10 bg-black/30 text-white/50 hover:text-white/80 hover:bg-white/5'
       } disabled:cursor-not-allowed disabled:opacity-40`}
     >
       {children}

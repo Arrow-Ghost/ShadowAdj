@@ -25,6 +25,7 @@ export async function createSession(body: {
   consent: { speakerAcknowledged: boolean; secondPartyAcknowledged: boolean };
   languages?: string[];
   expectSpeakers?: number;
+  transcriptSource?: 'server' | 'browser';
 }): Promise<CreatedSession> {
   const r = await fetch(`${API_BASE}/api/sessions`, {
     method: 'POST',

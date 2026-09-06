@@ -4,16 +4,16 @@ import * as THREE from 'three';
 type Descriptor = 'measured' | 'steady' | 'fast' | null;
 
 const PALETTE: Record<string, THREE.Color> = {
-  idle: new THREE.Color('#2b4a63'),
+  idle: new THREE.Color('#1e3a5f'),
   measured: new THREE.Color('#00ff9c'),
   steady: new THREE.Color('#00d4ff'),
   fast: new THREE.Color('#ffb800'),
 };
 
 /**
- * Real-time audio sphere. Vertex displacement follows the live FFT; colour
- * follows the *pace descriptor* (measured / steady / fast) — it is a reflection
- * of how someone is speaking, never a risk or suspicion indicator.
+ * Enhanced Real-time WebGL audio sphere.
+ * Vertex displacement follows the live FFT; colour follows pace descriptor.
+ * Features ambient floating particles, orbital aura ring, and dynamic mouse tracking.
  */
 export default function Sphere({
   analyser,
@@ -37,38 +37,75 @@ export default function Sphere({
     if (!el) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    camera.position.set(0, 0, 4.2);
+    const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.1, 100);
+    camera.position.set(0, 0, 4.4);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(el.clientWidth, el.clientHeight);
     el.appendChild(renderer.domElement);
 
-    const geo = new THREE.IcosahedronGeometry(1.25, 14);
+    // 1. Core Sphere Geometry
+    const geo = new THREE.IcosahedronGeometry(1.22, 14);
     const basePositions = geo.attributes.position.array.slice(0) as Float32Array;
     const nVerts = geo.attributes.position.count;
 
-    const mat = new THREE.MeshStandardMaterial({
+    const mat = new THREE.MeshPhysicalMaterial({
       color: PALETTE.idle,
       emissive: PALETTE.idle,
-      emissiveIntensity: 0.35,
-      metalness: 0.1,
-      roughness: 0.35,
+      emissiveIntensity: 0.45,
+      metalness: 0.35,
+      roughness: 0.25,
       flatShading: true,
+      clearcoat: 0.6,
+      clearcoatRoughness: 0.2,
     });
     const mesh = new THREE.Mesh(geo, mat);
     scene.add(mesh);
 
-    const shell = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1.32, 6),
-      new THREE.MeshBasicMaterial({ color: PALETTE.idle, wireframe: true, transparent: true, opacity: 0.12 }),
-    );
+    // 2. Outer Wireframe Shell
+    const shellGeo = new THREE.IcosahedronGeometry(1.36, 6);
+    const shellMat = new THREE.MeshBasicMaterial({
+      color: PALETTE.idle,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.18,
+    });
+    const shell = new THREE.Mesh(shellGeo, shellMat);
     scene.add(shell);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const key = new THREE.PointLight(0xffffff, 40, 20);
+    // 3. Floating Orbital Particle Ring
+    const pCount = 140;
+    const pPositions = new Float32Array(pCount * 3);
+    for (let i = 0; i < pCount; i++) {
+      const angle = (i / pCount) * Math.PI * 2;
+      const radius = 1.7 + (Math.random() - 0.5) * 0.3;
+      pPositions[i * 3] = Math.cos(angle) * radius;
+      pPositions[i * 3 + 1] = (Math.random() - 0.5) * 0.4;
+      pPositions[i * 3 + 2] = Math.sin(angle) * radius;
+    }
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
+    const pMat = new THREE.PointsMaterial({
+      color: PALETTE.idle,
+      size: 0.04,
+      transparent: true,
+      opacity: 0.6,
+      blending: THREE.AdditiveBlending,
+    });
+    const particleRing = new THREE.Points(pGeo, pMat);
+    particleRing.rotation.x = Math.PI / 4;
+    scene.add(particleRing);
+
+    // 4. Lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const key = new THREE.PointLight(0xffffff, 45, 20);
     key.position.set(3, 4, 5);
     scene.add(key);
+
+    const rimLight = new THREE.PointLight(0x00d4ff, 25, 15);
+    rimLight.position.set(-3, -3, -2);
+    scene.add(rimLight);
 
     const freq = new Uint8Array(512);
     const target = PALETTE.idle.clone();
@@ -76,14 +113,30 @@ export default function Sphere({
     let tPrev = performance.now();
     let smooth = 0;
 
+    // Mouse Tracking
+    let targetMouseX = 0;
+    let targetMouseY = 0;
+    let mouseX = 0;
+    let mouseY = 0;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+      targetMouseX = x * 0.4;
+      targetMouseY = y * 0.3;
+    };
+    el.addEventListener('mousemove', onMouseMove);
+
     const resize = () => {
+      if (!el) return;
       const w = el.clientWidth;
       const h = el.clientHeight;
+      if (w === 0 || h === 0) return;
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     };
-    resize();
     const ro = new ResizeObserver(resize);
     ro.observe(el);
 
@@ -93,6 +146,13 @@ export default function Sphere({
       raf = requestAnimationFrame(animate);
       const dt = Math.min(0.05, (now - tPrev) / 1000);
       tPrev = now;
+
+      // Mouse Parallax
+      mouseX += (targetMouseX - mouseX) * dt * 4;
+      mouseY += (targetMouseY - mouseY) * dt * 4;
+      camera.position.x = mouseX + Math.sin(now / 6000) * 0.3;
+      camera.position.y = mouseY;
+      camera.lookAt(0, 0, 0);
 
       const a = analyserRef.current;
       let level = 0;
@@ -110,10 +170,10 @@ export default function Sphere({
         const nz = basePositions[ix + 2];
         const len = Math.hypot(nx, ny, nz) || 1;
         const bin = freq[(i * 7) % 256] / 255 || 0;
-        const disp = 1 + smooth * 0.35 + bin * smooth * 0.5 + Math.sin(now / 600 + i) * 0.01;
-        pos.array[ix] = (nx / len) * 1.25 * disp;
-        pos.array[ix + 1] = (ny / len) * 1.25 * disp;
-        pos.array[ix + 2] = (nz / len) * 1.25 * disp;
+        const disp = 1 + smooth * 0.4 + bin * smooth * 0.6 + Math.sin(now / 600 + i) * 0.012;
+        pos.array[ix] = (nx / len) * 1.22 * disp;
+        pos.array[ix + 1] = (ny / len) * 1.22 * disp;
+        pos.array[ix + 2] = (nz / len) * 1.22 * disp;
       }
       pos.needsUpdate = true;
       geo.computeVertexNormals();
@@ -122,14 +182,15 @@ export default function Sphere({
       target.lerp(want, Math.min(1, dt * 3));
       mat.color.copy(target);
       mat.emissive.copy(target);
-      mat.emissiveIntensity = 0.3 + smooth * 0.9;
+      mat.emissiveIntensity = 0.35 + smooth * 1.1;
       (shell.material as THREE.MeshBasicMaterial).color.copy(target);
+      (particleRing.material as THREE.PointsMaterial).color.copy(target);
 
-      mesh.rotation.y += dt * 0.18;
+      mesh.rotation.y += dt * 0.22;
       mesh.rotation.x = Math.sin(now / 4000) * 0.15;
-      shell.rotation.y -= dt * 0.05;
-      camera.position.x = Math.sin(now / 6000) * 0.5;
-      camera.lookAt(0, 0, 0);
+      shell.rotation.y -= dt * 0.08;
+      particleRing.rotation.y += dt * 0.15;
+      particleRing.scale.set(1 + smooth * 0.3, 1 + smooth * 0.3, 1 + smooth * 0.3);
 
       renderer.render(scene, camera);
     };
@@ -137,13 +198,20 @@ export default function Sphere({
 
     return () => {
       cancelAnimationFrame(raf);
+      el.removeEventListener('mousemove', onMouseMove);
       ro.disconnect();
       renderer.dispose();
       geo.dispose();
       mat.dispose();
-      el.removeChild(renderer.domElement);
+      shellGeo.dispose();
+      shellMat.dispose();
+      pGeo.dispose();
+      pMat.dispose();
+      if (renderer.domElement.parentElement) {
+        renderer.domElement.parentElement.removeChild(renderer.domElement);
+      }
     };
   }, []);
 
-  return <div ref={mount} className="h-full w-full" />;
+  return <div ref={mount} className="h-full w-full cursor-grab active:cursor-grabbing" />;
 }

@@ -118,9 +118,9 @@ export class TranscriptionPump {
     this.opts = opts;
     this.sr = sampleRate;
     this.bytesPerS = sampleRate * 2;
-    this.minChunk = this.bytesPerS * 3; // Reduced from 6s to 3s for lower streaming latency
+    this.minChunk = Math.floor(this.bytesPerS * 1.5); // 1.5s for fast streaming transcription
     this.maxChunk = this.bytesPerS * 12;
-    this.overlapBytes = Math.floor(this.bytesPerS * 0.8);
+    this.overlapBytes = Math.floor(this.bytesPerS * 0.4);
   }
 
   push(int16: Buffer): void {
@@ -130,11 +130,10 @@ export class TranscriptionPump {
     void this.run(false);
   }
 
-  /** Triggered on speech pause detected by VAD. Sends buffered speech immediately if >= 1.5s. */
+  /** Triggered on speech pause detected by VAD. Sends buffered speech immediately if >= 0.5s. */
   triggerPauseFlush(): void {
     if (!this.active || this.inFlight) return;
-    // Allow flushing if we have at least 1.5 seconds of audio accumulated during a speech pause
-    if (this.bytes >= Math.floor(this.bytesPerS * 1.5)) {
+    if (this.bytes >= Math.floor(this.bytesPerS * 0.5)) {
       void this.run(true);
     }
   }
@@ -155,7 +154,7 @@ export class TranscriptionPump {
   private async run(force: boolean): Promise<void> {
     if (!this.active || this.inFlight) return;
     if (!force && this.bytes < this.minChunk) return;
-    if (force && this.bytes < Math.floor(this.bytesPerS * 1.2)) return; // Require at least 1.2s on forced/pause run
+    if (force && this.bytes < Math.floor(this.bytesPerS * 0.4)) return; // Require at least 0.4s on forced/pause run
     this.inFlight = true;
 
     let take = 0;
@@ -207,4 +206,5 @@ export class TranscriptionPump {
     }
   }
 }
+
 
