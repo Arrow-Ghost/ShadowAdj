@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: radial-gradient(1200px 800px at 20% -10%, #16202b 0%, #0f1419 55%, #0b0f13 100%);
+  color: #e8e8e8;
+  min-height: 100%;
+}
+
+@layer components {
+  .glass {
+    @apply rounded-2xl border border-stroke bg-panel backdrop-blur-xl;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  }
+  .metric-label {
+    @apply text-[11px] uppercase tracking-[0.14em] text-white/45;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-xl border border-stroke px-4 py-2
+      text-sm font-medium transition-all duration-150 ease-pop
+      hover:border-white/30 hover:bg-white/5 active:scale-[0.98];
+  }
+  .btn-primary {
+    @apply border-cyan/40 bg-cyan/10 text-cyan hover:bg-cyan/20;
+  }
+}
+
+.bar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
