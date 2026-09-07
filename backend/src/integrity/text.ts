@@ -25,7 +25,10 @@ const COMMON_PHRASE_PATTERNS: RegExp[] = [
 ];
 
 const ATTRIBUTION_CUES =
-  /\b(according to|per |cites?|citing|as (stated|noted|written|argued|reported|shown) (by|in)|" ?\w|said (that )?|writes|argues that|reports that|as \w+ (said|noted|put it|argued|wrote)|study (by|from)|report (by|from)|research (by|from))\b/i;
+  /\b(according to|cites?|citing|as (stated|noted|written|argued|reported|shown) (by|in)|" ?\w|said (that )?|writes|argues that|reports that|as \w+ (said|noted|put it|argued|wrote)|study (by|from)|report (by|from)|research (by|from))\b/i;
+// "per Smith (2020)" style attribution — case-sensitive so it doesn't fire on
+// the ordinary word "per" in "per unit", "per capita", "per cent", etc.
+const PER_ATTRIBUTION = /\bper\s+[A-Z][a-z]/;
 
 export function normalize(text: string): string {
   return (text || '')
@@ -43,7 +46,10 @@ export function words(text: string): string[] {
 export function sentences(text: string): string[] {
   return (text || '')
     .replace(/\s+/g, ' ')
-    .split(/(?<=[.!?])\s+(?=[A-Z"'(])|(?<=[.!?])$/)
+    // Split on any terminal punctuation + space. Server transcription (Whisper)
+    // returns lowercase-joined fragments, so requiring a capital next would leave
+    // the whole answer as one run-on "sentence" and wreck phrase extraction.
+    .split(/(?<=[.!?])\s+|(?<=[.!?])$/)
     .map((s) => s.trim())
     .filter((s) => words(s).length >= 3);
 }
@@ -131,7 +137,7 @@ export function distinctivePhrases(
 export function isAttributed(fullText: string, phrase: string): boolean {
   const idx = fullText.toLowerCase().indexOf(phrase.toLowerCase().slice(0, 40));
   const windowText = idx >= 0 ? fullText.slice(Math.max(0, idx - 160), idx + phrase.length + 40) : phrase;
-  if (ATTRIBUTION_CUES.test(windowText)) return true;
+  if (ATTRIBUTION_CUES.test(windowText) || PER_ATTRIBUTION.test(windowText)) return true;
   // inside quotation marks
   return /["“”].{0,400}["“”]/s.test(windowText) && /["“”]/.test(fullText.slice(Math.max(0, idx - 3), idx + 3));
 }

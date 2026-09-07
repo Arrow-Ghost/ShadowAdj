@@ -46,9 +46,17 @@ const aiConfig = {
   },
 };
 
+// Accept a comma-separated CORS_ORIGIN list; always also allow the localhost /
+// 127.0.0.1 dev origins on any port so `localhost` vs `127.0.0.1` in the address
+// bar doesn't silently break the frontend's health check.
+const corsList = (process.env.CORS_ORIGIN || 'http://localhost:4321,http://127.0.0.1:4321')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 export const config = {
   port: Number(process.env.PORT) || 8787,
-  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:4321',
+  corsOrigin: [...corsList, /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/] as (string | RegExp)[],
   databaseUrl: process.env.DATABASE_URL || 'file:./data/shadowadj.db',
   searchProvider: (process.env.SEARCH_PROVIDER || 'mock') as 'mock' | 'exa' | 'brave' | 'bing',
   // 'auto' -> server transcription when a key is present; 'browser' -> force Web Speech API

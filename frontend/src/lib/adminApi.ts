@@ -1,4 +1,5 @@
 import { API_BASE } from './api';
+import { toast } from './ui/toast';
 
 /* ---- shared fetch with a bearer token (dev/cross-origin friendly) ---- */
 const TOKEN_KEY = 'shadowadj_token';
@@ -21,7 +22,11 @@ async function jf<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${r.status} ${path}`);
+  if (!r.ok) {
+    const msg = (await r.json().catch(() => ({}))).error || `${r.status} ${path}`;
+    toast.error(msg);
+    throw new Error(msg);
+  }
   return r.json() as Promise<T>;
 }
 

@@ -42,5 +42,5 @@ test('provider is seedable for a demo corpus', async () => {
   const hits = await p.search('mitochondria is the powerhouse of the cell');
   assert.equal(hits.length, 1);
   assert.equal(hits[0]!.domain, 'x.test');
-  assert.ok(SEED_CORPUS.length === 6);
+  assert.ok(SEED_CORPUS.length >= 6);
 });

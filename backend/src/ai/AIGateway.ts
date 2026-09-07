@@ -78,6 +78,14 @@ interface RawResult {
   outputTokens: number;
 }
 
+/** Speech-to-text hints passed through to the Whisper endpoint. */
+export interface SttOpts {
+  /** ISO-639-1 code (e.g. "en") to pin the decoder language. */
+  language?: string;
+  /** Prior transcript text used as a decoder prefix for cross-chunk continuity. */
+  prompt?: string;
+}
+
 export class AIGateway {
   private readonly provider: 'gemini' | 'groq';
   private readonly groqApiKey: string;
@@ -102,9 +110,9 @@ export class AIGateway {
   }
 
   // --- transcription (text out) -------------------------------------------
-  async transcribe(pcm16: Buffer, sampleRate = 16_000): Promise<string> {
+  async transcribe(pcm16: Buffer, sampleRate = 16_000, sttOpts: SttOpts = {}): Promise<string> {
     const wav = pcm16ToWavBase64(pcm16, sampleRate);
-    const { text } = await this.raw('transcribe', transcribeParts(wav), this.models.transcribe);
+    const { text } = await this.raw('transcribe', transcribeParts(wav), this.models.transcribe, sttOpts);
     if (TRANSCRIBE_EMPTY_RE.test(text)) return '';
     return text;
   }
@@ -113,14 +121,18 @@ export class AIGateway {
   async transcribeStructured(
     pcm16: Buffer,
     sampleRate = 16_000,
-    opts: { languages?: string[]; expectSpeakers?: number } = {},
+    opts: { languages?: string[]; expectSpeakers?: number; prompt?: string } = {},
   ): Promise<{ text: string; utterances: Array<{ text: string; lang: string; speaker: string }> }> {
     const wav = pcm16ToWavBase64(pcm16, sampleRate);
+    // Only pin the decoder language when the session declares exactly one — a
+    // genuinely multilingual session must be left to auto-detect per chunk.
+    const primaryLang = (opts.languages ?? []).length === 1 ? opts.languages![0]!.split('-')[0] : undefined;
     const result = await this.callJson<Array<{ text: string; lang: string; speaker: string }>>({
       op: 'transcribe-structured',
       parts: transcribeStructuredParts(wav, opts),
       models: this.models.transcribe,
       repairHint: TRANSCRIBE_STRUCT_REPAIR,
+      sttOpts: { language: primaryLang, prompt: opts.prompt },
       validate: (v) => {
         const o = asObject(v);
         if (!Array.isArray(o.utterances)) throw new AiValidationError('utterances must be an array');
@@ -265,7 +277,7 @@ export class AIGateway {
     return { calls, inputTokens: inTok, outputTokens: outTok, estCostUsd: Number(est.toFixed(5)) };
   }
 
-  private async raw(op: string, parts: Part[], models: string[]): Promise<RawResult> {
+  private async raw(op: string, parts: Part[], models: string[], sttOpts: SttOpts = {}): Promise<RawResult> {
     if (!this.enabled()) throw new Error('AIGateway: no API key configured');
     let lastErr: unknown;
     for (const model of models) {
@@ -280,7 +292,7 @@ export class AIGateway {
           inTok = r.inputTokens ?? 0;
           outTok = r.outputTokens ?? 0;
         } else if (this.provider === 'groq') {
-          const r = await this.rawGroq(op, model, parts);
+          const r = await this.rawGroq(op, model, parts, sttOpts);
           text = r.text.trim();
           inTok = r.inputTokens;
           outTok = r.outputTokens;
@@ -306,6 +318,7 @@ export class AIGateway {
     op: string,
     model: string,
     parts: Part[],
+    sttOpts: SttOpts = {},
   ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
     const inline = parts.find((p) => 'inlineData' in p && p.inlineData);
 
@@ -318,8 +331,9 @@ export class AIGateway {
         formData.append('file', new Blob([wavBuffer], { type: 'audio/wav' }), 'speech.wav');
         formData.append('model', model);
         formData.append('response_format', 'verbose_json');
-
         formData.append('temperature', '0');
+        if (sttOpts.language) formData.append('language', sttOpts.language);
+        if (sttOpts.prompt) formData.append('prompt', sttOpts.prompt.slice(-800));
 
         const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
           method: 'POST',
@@ -386,6 +400,11 @@ export class AIGateway {
         formData.append('model', model);
         formData.append('response_format', 'json');
         formData.append('temperature', '0');
+        // Telling Whisper the language and giving it the running transcript tail
+        // as a decoder prefix materially improves accuracy and cross-chunk
+        // continuity (proper nouns, sentence casing, no repeated seams).
+        if (sttOpts.language) formData.append('language', sttOpts.language);
+        if (sttOpts.prompt) formData.append('prompt', sttOpts.prompt.slice(-800));
 
         const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
           method: 'POST',
@@ -444,6 +463,7 @@ export class AIGateway {
     validate: (v: unknown) => T;
     repairHint: string;
     fallback: T;
+    sttOpts?: SttOpts;
   }): Promise<T> {
     const key = hash(args.op + JSON.stringify(args.parts));
     if (this.cache.has(key)) return this.cache.get(key) as T;
@@ -452,7 +472,7 @@ export class AIGateway {
       try {
         const parts =
           attempt === 0 ? args.parts : [...args.parts, { text: args.repairHint } as Part];
-        const { text } = await this.raw(args.op, parts, args.models);
+        const { text } = await this.raw(args.op, parts, args.models, args.sttOpts);
         const value = args.validate(extractJson(text));
         this.cache.set(key, value);
         return value;

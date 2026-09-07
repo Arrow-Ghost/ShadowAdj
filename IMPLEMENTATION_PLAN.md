@@ -271,16 +271,16 @@ that fail the build:
 
 ## 4. Phased plan (spec §113) with realistic sizing
 
-Sizing is relative effort, not calendar. "⚠" marks work that is partially infeasible with
+Sizing is relative effort, not calendar. "[Note]" marks work that is partially infeasible with
 current tooling — interface now, real implementation gated on an external dependency.
 
 | Phase | Scope | Rests on | Size | Notes |
 | --- | --- | --- | --- | --- |
 | **1 Foundation** | Refactors A–D + E. Entities Event/Round/Participant/Session/Transcript/SpeechMetric. Existing console keeps working against the new session layer. Tests. | — | **L** | The only phase this document commits to implementing next |
 | **2 Judging** | Rubric Engine, Judge Engine, criterion scoring + evidence + confidence, Evidence timeline (persisted), human override, AI-score/human-score split | 1 | **XL** | The core product. Judge Engine is a set of `AIGateway.judgeCriterion` calls over structured argument state |
-| **3 Integrity — core** | Exact + fuzzy + semantic matching, common-phrase downweighting, quotation awareness, cross-participant similarity, `IntegrityCase`, risk levels, human review, `SourceSearchProvider` **interface + mock** | 1, 2 | **XL** | ⚠ Real external source search needs a provider key (Exa / Brave / Bing / SerpAPI). Ships with `MockSourceSearchProvider` |
-| **4 Integrity — advanced** | Style baseline, preparedness analysis, AI-assistance signal aggregation, session-integrity hashing + anomaly detection, appeals, source graph | 3 | **L** | ⚠ Tamper-*proof* mode is not achievable in a browser (spec §47 concedes this). Deliver: SHA-256 artefact hashing, timestamp-continuity checks, anomaly logging → review |
-| **5 Multilingual** | Language detection, native-language transcription, code-switch segmentation, translation-alongside (never translate-before-judge), cross-language similarity | 1 | **M** | ⚠ Diarization is best-effort via the transcription model, flagged low-confidence — no local diarizer is available |
+| **3 Integrity — core** | Exact + fuzzy + semantic matching, common-phrase downweighting, quotation awareness, cross-participant similarity, `IntegrityCase`, risk levels, human review, `SourceSearchProvider` **interface + mock** | 1, 2 | **XL** | [Note] Real external source search needs a provider key (Exa / Brave / Bing / SerpAPI). Ships with `MockSourceSearchProvider` |
+| **4 Integrity — advanced** | Style baseline, preparedness analysis, AI-assistance signal aggregation, session-integrity hashing + anomaly detection, appeals, source graph | 3 | **L** | [Note] Tamper-*proof* mode is not achievable in a browser (spec §47 concedes this). Deliver: SHA-256 artefact hashing, timestamp-continuity checks, anomaly logging → review |
+| **5 Multilingual** | Language detection, native-language transcription, code-switch segmentation, translation-alongside (never translate-before-judge), cross-language similarity | 1 | **M** | [Note] Diarization is best-effort via the transcription model, flagged low-confidence — no local diarizer is available |
 | **6 Coaching** | Weakness extraction *from Judge output*, personalised plans, adaptive drills, AI opponent with session memory, dynamic difficulty, retry + before/after, progress tracking | 2 | **L** | Coach consumes Judge weaknesses verbatim (spec §89) — not generic advice |
 | **7 Competition OS** | Admin console, judge rooms, participant management, leaderboard (public status only), multi-judge consensus + variance, tie-break engine, post-event analytics, replay archive, auth + RBAC, audit log surfacing, in-process job queue | all | **XL** | Auth (§79–80) and the queue (§107) may need to move earlier if a real multi-user pilot is scheduled |
 

@@ -150,13 +150,13 @@ export default function MicTester({ onAudioLevel, onAnalyserCreated }: MicTester
               : 'border-cyan/50 bg-cyan/10 text-cyan hover:border-cyan hover:bg-cyan/20 hover:text-white shadow-[0_0_12px_rgba(0,212,255,0.15)]'
           }`}
         >
-          {testing ? '⏹ Stop Test' : '🎙️ Test Mic Signal'}
+          {testing ? 'Stop Test' : 'Test Mic Signal'}
         </button>
       </div>
 
       {permissionError && (
         <div className="mt-3 rounded-lg border border-rose/30 bg-rose/10 px-3 py-1.5 text-xs text-rose">
-          ⚠️ {permissionError}
+          <span className="font-mono font-bold mr-1.5">[NOTICE]</span>{permissionError}
         </div>
       )}
 
@@ -165,7 +165,7 @@ export default function MicTester({ onAudioLevel, onAnalyserCreated }: MicTester
         <div className="flex items-center justify-between text-[10px] font-mono text-white/40 mb-1.5">
           <span>INPUT GAIN</span>
           <span className={micLevel > 15 ? 'text-mint font-bold' : 'text-white/40'}>
-            {testing ? `${micLevel}% ${micLevel > 75 ? '⚡ HIGH' : micLevel > 15 ? '✓ OPTIMAL' : '… LOW'}` : 'OFFLINE'}
+            {testing ? `${micLevel}% ${micLevel > 75 ? 'HIGH' : micLevel > 15 ? 'OPTIMAL' : 'LOW'}` : 'OFFLINE'}
           </span>
         </div>
         <div className="relative h-2 w-full overflow-hidden rounded-full bg-black/40 border border-white/10 p-0.5">

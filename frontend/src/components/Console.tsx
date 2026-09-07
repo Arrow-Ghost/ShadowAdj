@@ -5,6 +5,7 @@ import { browserSpeechSupported, startBrowserSpeech } from '@/lib/speech';
 import { useConsole } from '@/lib/store';
 import { saveHistory, download, toCSV, type HistoryEntry } from '@/lib/history';
 import { clock } from '@/lib/format';
+import { toast } from '@/lib/ui/toast';
 import Sphere from './Sphere';
 import MetricRail from './MetricRail';
 import Timeline from './Timeline';
@@ -16,21 +17,21 @@ const MODES: { id: SessionMode; title: string; blurb: string; icon: string; tag:
     id: 'debate-practice',
     title: 'Debate Practice',
     blurb: 'Rounds, clashes, rebuttals, and speaker drills with pace reflection.',
-    icon: '⚔️',
+    icon: '01',
     tag: 'Competitive',
   },
   {
     id: 'interview-prep',
     title: 'Interview Prep',
     blurb: 'Rehearse behavioural answers, structural flow, and filler control.',
-    icon: '🎯',
+    icon: '02',
     tag: 'Executive',
   },
   {
     id: 'speech-coaching',
     title: 'Speech Coaching',
     blurb: 'Keynotes, toasts, presentations, and oratory cadence mastery.',
-    icon: '🎙️',
+    icon: '03',
     tag: 'Rhetoric',
   },
 ];
@@ -87,6 +88,7 @@ export default function Console() {
     defaultTranscription?: 'server' | 'browser';
   } | null>(null);
   const [consent, setConsent] = useState({ speaker: false, second: false });
+  const [showOnboard, setShowOnboard] = useState(false);
   const [testAudioLevel, setTestAudioLevel] = useState(0);
   const [testAnalyser, setTestAnalyser] = useState<AnalyserNode | null>(null);
   const [finalizing, setFinalizing] = useState(false);
@@ -113,10 +115,39 @@ export default function Console() {
     transcriptBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [store.snapshot?.transcript.text, store.transcriptLive]);
 
+  // Resilient health check: the backend runs with --watch and restarts on every
+  // save, so a one-shot probe often lands in a dead window and then the banner
+  // sticks forever. Retry a few times, then keep polling; recover on its own
+  // when the backend comes back.
   useEffect(() => {
-    getHealth()
-      .then(setHealth)
-      .catch(() => setError('Backend not reachable on :8787 — ensure backend service is running.'));
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let misses = 0;
+
+    const ping = async () => {
+      try {
+        const h = await getHealth();
+        if (!alive) return;
+        setHealth(h);
+        setError((e) => (e && e.startsWith('Backend not reachable') ? null : e));
+        misses = 0;
+        timer = setTimeout(ping, 15_000); // steady re-check while it's up
+      } catch {
+        if (!alive) return;
+        misses += 1;
+        if (misses >= 3) {
+          setHealth(null);
+          setError('Backend not reachable on :8787 — start it with `npm run dev` (only one instance), then it reconnects automatically.');
+        }
+        timer = setTimeout(ping, Math.min(1000 * misses, 4000)); // fast retry while down
+      }
+    };
+    ping();
+
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -124,6 +155,54 @@ export default function Console() {
   }, [prefs]);
 
   useEffect(() => () => teardown(), []);
+
+  useEffect(() => {
+    try {
+      setShowOnboard(!localStorage.getItem('shadowadj.onboarded.v1'));
+    } catch {
+      /* private mode — just skip the tip */
+    }
+  }, []);
+
+  function dismissOnboard() {
+    setShowOnboard(false);
+    try {
+      localStorage.setItem('shadowadj.onboarded.v1', '1');
+    } catch {
+      /* noop */
+    }
+  }
+
+  // Surface the newest notice as a transient toast (the banner keeps the
+  // persistent copy for anything the user needs to keep reading).
+  const lastNoticeRef = useRef(0);
+  useEffect(() => {
+    const n = store.notices;
+    if (n.length > lastNoticeRef.current) {
+      toast.warn(n[n.length - 1]);
+      lastNoticeRef.current = n.length;
+    }
+  }, [store.notices]);
+
+  // Keyboard shortcuts while a round is live: Q question · C clash · P POI · E end.
+  useEffect(() => {
+    if (step !== 'live') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'q') { sendTimelineTag('question', 'Q'); toast('Question marked'); }
+      else if (k === 'c') { sendTimelineTag('clash', 'CLASH-'); toast('Clash marked'); }
+      else if (k === 'p') { sendTimelineTag('poi', 'POI-'); toast('POI marked'); }
+      else if (k === 'e') endSession();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   function teardown() {
     captureRef.current?.stop();
@@ -165,7 +244,7 @@ export default function Console() {
           store.set({
             notices: [
               ...useConsole.getState().notices,
-              'This browser has no speech recognition. Set an API key (GROQ_API_KEY or GEMINI_API_KEY) for server transcription, or use Chrome.',
+              'This browser has no speech recognition. Switch to server transcription, or use Chrome.',
             ],
           });
         }
@@ -355,12 +434,12 @@ export default function Console() {
           </div>
 
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-white/40">Backend Engine:</span>
+            <span className="text-white/40">Transcription:</span>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-mono text-[11px] font-semibold ${
               serverAvailable ? 'border border-mint/40 bg-mint/10 text-mint' : 'border border-amber/40 bg-amber/10 text-amber'
             }`}>
               <span className={`h-1.5 w-1.5 rounded-full ${serverAvailable ? 'bg-mint' : 'bg-amber'}`} />
-              {serverAvailable ? `${health?.provider?.toUpperCase() || 'SERVER AI'} (${health?.model || 'ONLINE'})` : 'OFFLINE / BROWSER FALLBACK'}
+              {serverAvailable ? 'SERVER · READY' : 'BROWSER FALLBACK'}
             </span>
           </div>
         </div>
@@ -374,6 +453,29 @@ export default function Console() {
         </p>
 
         {error && <Banner tone="rose">{error}</Banner>}
+
+        {showOnboard && (
+          <div className="reveal mt-5 flex items-start gap-3 rounded-2xl border border-cyan/25 bg-cyan/[0.06] p-4">
+            <span className="font-mono text-[11px] font-bold tracking-wider text-cyan px-2 py-0.5 rounded border border-cyan/30 bg-cyan/10">GUIDE</span>
+            <div className="flex-1 text-sm text-white/75">
+              <p className="font-semibold text-white">New here? Three quick steps.</p>
+              <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 text-[13px] text-white/60">
+                <li>Pick a mode and (optionally) name the round.</li>
+                <li>Keep <span className="text-cyan">Server AI Transport</span> selected — it works in every browser.</li>
+                <li>Acknowledge consent, allow the mic, and talk. Metrics fill in as you go.</li>
+              </ol>
+              <p className="mt-1.5 text-[12px] text-white/40">
+                While live: <kbd>Q</kbd> mark question · <kbd>C</kbd> clash · <kbd>P</kbd> POI · <kbd>E</kbd> end.
+              </p>
+            </div>
+            <button
+              onClick={dismissOnboard}
+              className="rounded-lg border border-white/10 px-2 py-1 text-xs text-white/50 transition hover:border-white/25 hover:text-white"
+            >
+              Got it
+            </button>
+          </div>
+        )}
 
         {/* Mode Selector Cards */}
         <div className="mt-8">
@@ -393,7 +495,7 @@ export default function Console() {
                   }`}
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-2xl">{m.icon}</span>
+                    <span className="font-mono text-sm font-semibold tracking-wider text-cyan/80">{m.icon}</span>
                     <span className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-semibold uppercase ${
                       active ? 'bg-cyan/20 text-cyan border border-cyan/40' : 'bg-white/5 text-white/40'
                     }`}>
@@ -503,11 +605,11 @@ export default function Console() {
               } disabled:cursor-not-allowed disabled:opacity-40`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-sm text-cyan">⚡ Server AI Transport</span>
+                <span className="font-semibold text-sm text-cyan">Server AI Transport</span>
                 <span className="font-mono text-[10px] text-mint">RECOMMENDED</span>
               </div>
               <p className="mt-1 text-xs text-white/50">
-                Low-latency cloud model ({health?.provider?.toUpperCase() || 'GEMINI'}/{health?.model || 'FLASH'}). Works on all browsers.
+                Low-latency server transcription. Works on every browser.
               </p>
             </button>
 
@@ -521,7 +623,7 @@ export default function Console() {
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-sm text-white">🌐 Browser Web Speech</span>
+                <span className="font-semibold text-sm text-white">Browser Web Speech</span>
                 <span className="font-mono text-[10px] text-white/40">CHROME ONLY</span>
               </div>
               <p className="mt-1 text-xs text-white/50">
@@ -619,8 +721,8 @@ export default function Console() {
             <div className="space-y-3">
               <div className="glass p-4 transition hover:border-cyan/30">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan/40 bg-cyan/10 text-cyan">
-                    🛡️
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan/40 bg-cyan/10 font-mono text-xs font-bold text-cyan">
+                    01
                   </div>
                   <div>
                     <h3 className="font-semibold text-sm text-white">Ephemeral RAM Audio Stream</h3>
@@ -633,8 +735,8 @@ export default function Console() {
 
               <div className="glass p-4 transition hover:border-mint/30">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-mint/40 bg-mint/10 text-mint">
-                    ⚖️
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-mint/40 bg-mint/10 font-mono text-xs font-bold text-mint">
+                    02
                   </div>
                   <div>
                     <h3 className="font-semibold text-sm text-white">Pure Linguistic Telemetry · No Automated Verdicts</h3>
@@ -647,8 +749,8 @@ export default function Console() {
 
               <div className="glass p-4 transition hover:border-amber/30">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber/40 bg-amber/10 text-amber">
-                    👁️
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber/40 bg-amber/10 font-mono text-xs font-bold text-amber">
+                    03
                   </div>
                   <div>
                     <h3 className="font-semibold text-sm text-white">Mutual Glass Transparency</h3>
@@ -681,7 +783,11 @@ export default function Console() {
                         : 'border-white/30 bg-black/40'
                     }`}
                   >
-                    {consent.speaker && '✓'}
+                    {consent.speaker && (
+                      <svg className="h-3.5 w-3.5 text-slate-950 stroke-[3]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    )}
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
@@ -718,7 +824,11 @@ export default function Console() {
                         : 'border-white/30 bg-black/40'
                     }`}
                   >
-                    {consent.second && '✓'}
+                    {consent.second && (
+                      <svg className="h-3.5 w-3.5 text-slate-950 stroke-[3]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    )}
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
@@ -755,7 +865,7 @@ export default function Console() {
                     : 'opacity-40 cursor-not-allowed border-white/10 bg-white/5 text-white/40'
                 }`}
               >
-                {consent.speaker ? '🚀 Authorize Mic & Launch Console' : '🔒 Check Required Consent Above'}
+                {consent.speaker ? 'Authorize Mic & Launch Console' : 'Check Required Consent Above'}
               </button>
             </div>
           </div>
@@ -786,11 +896,11 @@ export default function Console() {
                 </h1>
                 <p className="text-[11px] text-white/40 font-mono">
                   PIPE: {snap?.transcript.source === 'server'
-                    ? `${health?.provider ? health.provider.toUpperCase() : 'SERVER AI'}${health?.model ? ` (${health.model})` : ''}`
+                    ? 'SERVER TRANSCRIPTION'
                     : snap?.transcript.source === 'browser'
-                      ? 'BROWSER WEB SPEECH'
+                      ? 'BROWSER TRANSCRIPTION'
                       : 'PCM 16KHZ WORKLET'}
-                  {store.transcribing && <span className="ml-1.5 text-cyan animate-pulse">● AI TRANSCRIBING</span>}
+                  {store.transcribing && <span className="ml-1.5 text-cyan animate-pulse">● transcribing…</span>}
                 </p>
               </div>
             </div>
@@ -813,34 +923,34 @@ export default function Console() {
                 <>
                   <button
                     type="button"
-                    onClick={() => sendTimelineTag('question', 'Q')}
+                    onClick={() => { sendTimelineTag('question', 'Q'); toast('Question marked'); }}
                     className="btn !px-3 !py-2 text-xs border-cyan/40 bg-cyan/10 text-cyan hover:bg-cyan/20"
-                    title="Timestamp a question asked in this debate round"
+                    title="Timestamp a question asked in this debate round (Q)"
                   >
-                    ❓ Mark Question
+                    Mark Question <kbd className="ml-1">Q</kbd>
                   </button>
                   <button
                     type="button"
-                    onClick={() => sendTimelineTag('clash', 'CLASH-')}
+                    onClick={() => { sendTimelineTag('clash', 'CLASH-'); toast('Clash marked'); }}
                     className="btn !px-3 !py-2 text-xs border-amber/40 bg-amber/10 text-amber hover:bg-amber/20"
-                    title="Timestamp an argument clash"
+                    title="Timestamp an argument clash (C)"
                   >
-                    ⚔️ Clash
+                    Clash <kbd className="ml-1">C</kbd>
                   </button>
                   <button
                     type="button"
-                    onClick={() => sendTimelineTag('poi', 'POI-')}
+                    onClick={() => { sendTimelineTag('poi', 'POI-'); toast('POI marked'); }}
                     className="btn !px-3 !py-2 text-xs border-mint/40 bg-mint/10 text-mint hover:bg-mint/20"
-                    title="Timestamp a Point of Information"
+                    title="Timestamp a Point of Information (P)"
                   >
-                    ✋ POI
+                    POI <kbd className="ml-1">P</kbd>
                   </button>
                   <button
                     type="button"
                     onClick={endSession}
                     className="btn btn-danger !px-4 !py-2 text-xs font-bold shadow-[0_0_15px_rgba(255,92,122,0.4)]"
                   >
-                    ⏹ End Session
+                    End Session
                   </button>
                 </>
               )}
@@ -907,7 +1017,7 @@ export default function Console() {
         <div className="glass p-5">
           <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
-              <span>📝 Live Speech Transcript</span>
+              <span>Live Speech Transcript</span>
               {store.transcribing && <span className="font-mono text-[10px] text-cyan animate-pulse">● TRANSCRIBING…</span>}
               {step === 'live' && (
                 <span className="font-mono text-[10px] text-mint/80 flex items-center gap-1">
@@ -949,7 +1059,7 @@ export default function Console() {
         {/* Self-Review & Coaching Notes */}
         <div className="glass p-5">
           <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
-            <h3 className="text-sm font-semibold text-white">🎯 Coaching Insights &amp; Export</h3>
+            <h3 className="text-sm font-semibold text-white">Coaching Insights &amp; Export</h3>
             {step === 'ended' && (
               <div className="flex gap-2">
                 <button
@@ -972,7 +1082,7 @@ export default function Console() {
 
           {step !== 'ended' ? (
             <div className="flex flex-col items-center justify-center py-10 text-center text-xs text-white/40">
-              <span className="text-2xl mb-2">⏱️</span>
+              <span className="font-mono text-xs text-white/40 mb-2 uppercase tracking-wider">[IN PROGRESS]</span>
               <p>Session in progress. Post-round speech coaching &amp; structure reflection unlock automatically once the round ends.</p>
             </div>
           ) : serverAvailable ? (
@@ -983,7 +1093,7 @@ export default function Console() {
                   className="btn btn-primary text-xs w-full py-2.5 font-semibold"
                   onClick={getCoaching}
                 >
-                  ⚡ Generate AI Speech &amp; Delivery Notes
+                  Generate AI Speech &amp; Delivery Notes
                 </button>
               )}
 
@@ -1007,7 +1117,7 @@ export default function Console() {
             </div>
           ) : (
             <p className="text-xs text-white/40">
-              Configure <code className="text-cyan">GEMINI_API_KEY</code> or <code className="text-cyan">GROQ_API_KEY</code> to enable automated speech coaching.
+              Server transcription is offline, so automated speech coaching is unavailable for this session.
             </p>
           )}
         </div>
@@ -1018,7 +1128,7 @@ export default function Console() {
         <div className="glass mt-4 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
             <div>
-              <h3 className="text-sm font-semibold text-white">🛡️ Source &amp; Linguistic Integrity Audit</h3>
+              <h3 className="text-sm font-semibold text-white">Source &amp; Linguistic Integrity Audit</h3>
               <p className="text-xs text-white/40">
                 Cross-references the round transcript against public corpora to surface unattributed external citations and AI phrasing patterns.
               </p>
@@ -1043,33 +1153,31 @@ export default function Console() {
               {integrity.data.case ? (
                 <>
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-white/60">Risk Evaluation:</span>
+                    <span className="font-semibold text-xs text-white">Risk Classification:</span>
                     <span
-                      className={`rounded-full border px-3 py-0.5 text-xs font-semibold ${
-                        integrity.data.case.riskLevel === 'LOW'
-                          ? 'border-mint/40 bg-mint/10 text-mint'
+                      className={`rounded-md px-2.5 py-0.5 font-mono text-xs font-bold ${
+                        integrity.data.case.riskLevel === 'HIGH' || integrity.data.case.riskLevel === 'CRITICAL'
+                          ? 'border border-rose/40 bg-rose/10 text-rose'
                           : integrity.data.case.riskLevel === 'MODERATE'
-                            ? 'border-amber/40 bg-amber/10 text-amber'
-                            : 'border-rose/40 bg-rose/10 text-rose'
+                            ? 'border border-amber/40 bg-amber/10 text-amber'
+                            : 'border border-mint/40 bg-mint/10 text-mint'
                       }`}
                     >
-                      {integrity.data.case.riskLevel} RISK
+                      {integrity.data.case.riskLevel}
                     </span>
-                    <span className="text-xs text-white/40">
-                      Confidence: <strong className="text-white/80">{integrity.data.case.confidence}</strong>
+                    <span className="text-xs text-white/40 font-mono">
+                      (Composite Score: {Math.round(integrity.data.case.compositeScore * 100)}%)
                     </span>
                   </div>
 
-                  {integrity.data.case.signals && integrity.data.case.signals.length > 0 && (
-                    <div className="mt-2">
-                      <div className="metric-label">Detected Signals</div>
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        {integrity.data.case.signals.map((sig: any, idx: number) => (
-                          <div key={idx} className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-1 text-xs text-white/80">
-                            <span className="font-mono text-cyan">{sig.key}</span> ({Math.round((sig.strength || 0) * 100)}% match)
-                          </div>
+                  {integrity.data.case.reasons && integrity.data.case.reasons.length > 0 && (
+                    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+                      <div className="metric-label mb-1.5">Integrity Observations</div>
+                      <ul className="list-disc pl-4 text-xs text-white/70 space-y-1">
+                        {integrity.data.case.reasons.map((r: string, idx: number) => (
+                          <li key={idx}>{r}</li>
                         ))}
-                      </div>
+                      </ul>
                     </div>
                   )}
 
@@ -1091,16 +1199,16 @@ export default function Console() {
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs text-mint/80">✓ No unattributed source matches detected in this transcript.</p>
+                    <p className="mt-2 text-xs text-mint/80">[CLEAN] No unattributed source matches detected in this transcript.</p>
                   )}
                 </>
               ) : integrity.data.analytics ? (
                 <div className="text-xs text-white/70">
-                  <p className="text-mint">✓ Tournament policy permits AI assistance — logged as disclosure telemetry.</p>
+                  <p className="text-mint">[PERMITTED] Tournament policy permits AI assistance — logged as disclosure telemetry.</p>
                   <p className="mt-1 text-white/40">Source matches: {integrity.data.analytics.sourceMatchCount}</p>
                 </div>
               ) : (
-                <p className="text-xs text-mint">✓ Transcript verified — clean.</p>
+                <p className="text-xs text-mint">[VERIFIED] Transcript verified — clean.</p>
               )}
             </div>
           )}

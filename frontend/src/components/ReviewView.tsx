@@ -18,6 +18,16 @@ import {
   type ReviewDecision,
   type SourceGraph,
 } from '@/lib/reviewApi';
+import { toast } from '@/lib/ui/toast';
+
+const REVIEWER_KEY = 'shadowadj.reviewerId';
+const savedReviewer = () => {
+  try {
+    return localStorage.getItem(REVIEWER_KEY) || '';
+  } catch {
+    return '';
+  }
+};
 
 function q(key: string) {
   return useMemo(() => {
@@ -88,7 +98,7 @@ function AppealResponder({ appealId, onDone }: { appealId: string; onDone: () =>
 function CaseCard({ c, onReviewed }: { c: IntegrityCase; onReviewed: (c: IntegrityCase) => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [form, setForm] = useState({ reviewerId: '', decision: 'monitor' as ReviewDecision, reason: '', notes: '' });
+  const [form, setForm] = useState({ reviewerId: savedReviewer(), decision: 'monitor' as ReviewDecision, reason: '', notes: '' });
   const [graph, setGraph] = useState<SourceGraph | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
   const [appeals, setAppeals] = useState<IntegrityAppeal[]>([]);
@@ -133,6 +143,12 @@ function CaseCard({ c, onReviewed }: { c: IntegrityCase; onReviewed: (c: Integri
     setErr(null);
     try {
       onReviewed(await reviewCase(c.id, form));
+      try {
+        localStorage.setItem(REVIEWER_KEY, form.reviewerId.trim());
+      } catch {
+        /* noop */
+      }
+      toast.success(`Decision recorded: ${DECISION_COPY[form.decision]}`);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -191,7 +207,10 @@ function CaseCard({ c, onReviewed }: { c: IntegrityCase; onReviewed: (c: Integri
                 <span className="text-white/45">{m.atMs != null ? `${clock(m.atMs)} · ` : ''}</span>
                 <span className="text-white/80">“{m.phrase.slice(0, 110)}{m.phrase.length > 110 ? '…' : ''}”</span>
                 <div className="mt-0.5 text-white/45">
-                  {m.domain} <span className="text-white/30">({m.sourceType}, credibility {Math.round(m.credibility * 100)}%)</span> ·{' '}
+                  <a href={m.sourceUrl} target="_blank" rel="noreferrer noopener" className="text-cyan hover:underline">
+                    {m.domain}
+                  </a>{' '}
+                  <span className="text-white/30">({m.sourceType}, credibility {Math.round(m.credibility * 100)}%)</span> ·{' '}
                   {Math.round(m.exactSimilarity * 100)}% word overlap · {m.quotationClass}
                 </div>
               </li>
@@ -396,8 +415,12 @@ export default function ReviewView() {
     setError(null);
     try {
       const r = await runIntegrity(sessionId);
-      if (r.case) setCases([r.case]);
-      else setError('This event permits AI assistance — recorded as disclosure analytics, no review case.');
+      if (r.case) {
+        setCases([r.case]);
+        toast.success('Integrity analysis complete');
+      } else {
+        setError('This event permits AI assistance — recorded as disclosure analytics, no review case.');
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -425,15 +448,29 @@ export default function ReviewView() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
-      <header className="mb-4">
-        <h1 className="text-lg font-semibold">Integrity review</h1>
-        <p className="mt-1 text-sm text-white/50">
-          Risk levels and evidence — not verdicts. A named human reviewer records every decision, and no
-          result should be published while a case is under review.
-        </p>
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold">Integrity review</h1>
+          <p className="mt-1 text-sm text-white/50">
+            Risk levels and evidence — not verdicts. A named human reviewer records every decision, and no
+            result should be published while a case is under review.
+          </p>
+        </div>
+        {sessionId && cases.length > 0 && (
+          <button className="btn !px-3 !py-1.5 text-xs" disabled={busy} onClick={analyse}>
+            {busy ? 'Re-analysing…' : 'Re-analyse'}
+          </button>
+        )}
       </header>
 
       {error && <div className="mb-4 rounded-xl border border-rose/40 bg-rose/10 px-4 py-2 text-sm text-rose">{error}</div>}
+
+      {!loaded && (sessionId || eventId || caseId) && (
+        <div className="glass p-6">
+          <div className="skeleton h-5 w-40" />
+          <div className="skeleton mt-3 h-24" />
+        </div>
+      )}
 
       {loaded && cases.length === 0 && sessionId && (
         <div className="glass p-6">

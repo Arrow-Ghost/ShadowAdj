@@ -1,7 +1,9 @@
-// Server-side transcription pump — extracted verbatim (behaviour-preserving) from
-// the old index.js WS handler. Buffers PCM16, sends 6–12s chunks with a 0.8s
-// overlap to the AI gateway, de-duplicates the seam, and auto-falls-back to
-// browser STT after repeated failures.
+// Server-side transcription pump. Buffers PCM16 and cuts a chunk on a VAD pause
+// (a natural sentence boundary) or, for continuous speech, a hard 6 s cap — up
+// to 20 s — with a 1.1 s overlap. Each chunk carries the running transcript tail
+// as a decoder prompt and a pinned language for accuracy; near-silent chunks are
+// dropped. dedupeJoin trims the seam; browser STT takes over after repeated
+// failures.
 
 import type { AIGateway } from '../ai/AIGateway.ts';
 
@@ -83,6 +85,22 @@ function levenshteinDist(s1: string, s2: string): number {
   return prev[s2.length] ?? 99;
 }
 
+/** RMS amplitude (0..1) of a little-endian PCM16 buffer. */
+function rms16(buf: Buffer): number {
+  const n = buf.length >> 1;
+  if (n === 0) return 0;
+  let sum = 0;
+  // sample sparsely for a cheap estimate on a big buffer
+  const step = n > 48_000 ? 3 : 1;
+  let count = 0;
+  for (let i = 0; i < n; i += step) {
+    const v = buf.readInt16LE(i * 2) / 32768;
+    sum += v * v;
+    count += 1;
+  }
+  return Math.sqrt(sum / count);
+}
+
 function dominantLang(utterances: Array<{ text: string; lang: string }>): string | undefined {
   if (utterances.length === 0) return undefined;
   const byLang = new Map<string, number>();
@@ -107,6 +125,9 @@ export class TranscriptionPump {
   private overlap: Buffer = Buffer.alloc(0);
   private acc = '';
   private failures = 0;
+  private readonly pauseMinBytes: number;
+  private readonly forceMinBytes: number;
+  private readonly language?: string;
 
   private readonly ai: AIGateway;
   private readonly handlers: PumpHandlers;
@@ -118,9 +139,22 @@ export class TranscriptionPump {
     this.opts = opts;
     this.sr = sampleRate;
     this.bytesPerS = sampleRate * 2;
-    this.minChunk = Math.floor(this.bytesPerS * 1.5); // 1.5s for fast streaming transcription
-    this.maxChunk = this.bytesPerS * 12;
-    this.overlapBytes = Math.floor(this.bytesPerS * 0.4);
+    // Whisper is much more accurate on 4-15 s of speech than on 1-2 s slivers.
+    // So: prefer to cut on a VAD pause (a natural sentence boundary); only fall
+    // back to a hard 6 s cut if the speaker never pauses. Bigger overlap gives
+    // dedupeJoin more to align on so no words are lost or doubled at the seam.
+    this.minChunk = this.bytesPerS * 6; // hard streaming cap for continuous speech
+    this.maxChunk = this.bytesPerS * 20;
+    this.overlapBytes = Math.floor(this.bytesPerS * 1.1);
+    this.pauseMinBytes = Math.floor(this.bytesPerS * 1.3); // a pause flush needs a real phrase
+    this.forceMinBytes = Math.floor(this.bytesPerS * 0.8);
+    // Pin the decoder language only when the session declares exactly one.
+    const langs = (opts.languages ?? []).filter(Boolean);
+    this.language = opts.multilingual
+      ? langs.length === 1
+        ? langs[0]!.split('-')[0]
+        : undefined
+      : (langs[0]?.split('-')[0] ?? 'en');
   }
 
   push(int16: Buffer): void {
@@ -130,10 +164,11 @@ export class TranscriptionPump {
     void this.run(false);
   }
 
-  /** Triggered on speech pause detected by VAD. Sends buffered speech immediately if >= 0.5s. */
+  /** Triggered on a VAD pause — the ideal place to cut a chunk. Sends the
+   *  buffered phrase if it's long enough to be worth a call. */
   triggerPauseFlush(): void {
     if (!this.active || this.inFlight) return;
-    if (this.bytes >= Math.floor(this.bytesPerS * 0.5)) {
+    if (this.bytes >= this.pauseMinBytes) {
       void this.run(true);
     }
   }
@@ -154,7 +189,7 @@ export class TranscriptionPump {
   private async run(force: boolean): Promise<void> {
     if (!this.active || this.inFlight) return;
     if (!force && this.bytes < this.minChunk) return;
-    if (force && this.bytes < Math.floor(this.bytesPerS * 0.4)) return; // Require at least 0.4s on forced/pause run
+    if (force && this.bytes < this.forceMinBytes) return;
     this.inFlight = true;
 
     let take = 0;
@@ -169,20 +204,32 @@ export class TranscriptionPump {
     const chunk = Buffer.concat([this.overlap, body]);
     this.overlap = body.subarray(Math.max(0, body.length - this.overlapBytes));
 
+    // On the streaming path, skip a chunk that is essentially silence — sending
+    // it to Whisper just invites a hallucination ("Thank you.", "you", "Bye.").
+    // A forced run (VAD pause / session end) always goes through: by then we
+    // know there was speech and we want the tail.
+    if (!force && rms16(chunk) < 0.0045) {
+      this.inFlight = false;
+      if (this.active && this.bytes >= this.minChunk) setImmediate(() => void this.run(false));
+      return;
+    }
+
     try {
       let text: string;
       let meta: DeltaMeta | undefined;
+      const stt = { language: this.language, prompt: this.acc };
       if (this.opts.multilingual) {
         const r = await this.ai.transcribeStructured(chunk, this.sr, {
           languages: this.opts.languages,
           expectSpeakers: this.opts.expectSpeakers,
+          prompt: this.acc,
         });
         text = r.text;
         const last = r.utterances[r.utterances.length - 1];
         // whole-delta metadata = the chunk's dominant language + latest speaker
         meta = { lang: dominantLang(r.utterances), speaker: last?.speaker };
       } else {
-        text = await this.ai.transcribe(chunk, this.sr);
+        text = await this.ai.transcribe(chunk, this.sr, stt);
       }
       this.failures = 0;
       if (text) {
@@ -197,7 +244,7 @@ export class TranscriptionPump {
       if (this.failures >= 3) {
         this.stop();
         this.handlers.onFallback(
-          'Gemini transcription is unavailable — switched to browser speech recognition.',
+          'Server transcription is unavailable — switched to browser speech recognition.',
         );
       }
     } finally {

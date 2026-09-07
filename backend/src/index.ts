@@ -84,7 +84,10 @@ function resolveRubric(sessionId: string, explicitRubricId?: string): Rubric {
 }
 
 const app = express();
-app.use(cors({ origin: config.corsOrigin }));
+// `credentials: true` is required because adminApi.ts sends `credentials: 'include'`
+// (cookie-token fallback) — without it the browser rejects every admin API response
+// with "Failed to fetch".
+app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json({ limit: '256kb' }));
 
 const wrap =
@@ -745,7 +748,7 @@ wss.on('connection', (ws, req) => {
 
 server.listen(config.port, () => {
   console.log(`[shadowadj] backend on http://localhost:${config.port}`);
-  console.log(`[shadowadj] CORS origin: ${config.corsOrigin}`);
+  console.log(`[shadowadj] CORS origin: ${config.corsOrigin.map((o) => (o instanceof RegExp ? o.source : o)).join(', ')}`);
 });
 
 process.on('SIGINT', () => {

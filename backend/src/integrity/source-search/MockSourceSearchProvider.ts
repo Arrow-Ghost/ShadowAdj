@@ -55,13 +55,86 @@ export const SEED_CORPUS: SourceDoc[] = [
     text:
       'Programmes that pair open markets with serious adjustment assistance — wage insurance, mobility grants, and portable benefits — show materially better outcomes for affected workers than trade liberalisation alone.',
   },
+  {
+    url: 'https://en.wikipedia.org/wiki/Artificial_intelligence',
+    domain: 'en.wikipedia.org',
+    title: 'Artificial intelligence — Wikipedia',
+    sourceType: 'reference',
+    text:
+      'Artificial intelligence is the intelligence of machines or software, as opposed to the intelligence of humans or other animals. The field studies methods and software that enable machines to perceive their environment and use learning and intelligence to take actions that maximise their chances of achieving defined goals. High-profile applications include advanced web search engines, recommendation systems, generative and creative tools, and autonomous vehicles.',
+  },
+  {
+    url: 'https://www.nature.com/articles/climate-tipping-points-review',
+    domain: 'nature.com',
+    title: 'Climate tipping points — too risky to bet against',
+    sourceType: 'academic',
+    text:
+      'The stability and resilience of the planet is in peril. International action, not just words, must reflect this. Evidence is mounting that some tipping points could be exceeded within the range of warming the world has already committed to. A cascade of abrupt shifts in the climate system could be triggered if several tipping points are crossed in succession, and the risk is now uncomfortably high.',
+  },
+  {
+    url: 'https://www.pewresearch.org/internet/social-media-and-democracy',
+    domain: 'pewresearch.org',
+    title: 'Social media, misinformation, and democratic engagement',
+    sourceType: 'reference',
+    text:
+      'Social media platforms have lowered the cost of political participation and let movements organise at unprecedented speed, but the same architecture rewards outrage and novelty over accuracy. Algorithmic amplification means that false claims frequently travel farther and faster than corrections, and repeated exposure alone increases the perceived truth of a statement.',
+  },
+  {
+    url: 'https://www.who.int/publications/universal-health-coverage-brief',
+    domain: 'who.int',
+    title: 'Universal health coverage: the economic case',
+    sourceType: 'government',
+    text:
+      'Universal health coverage means that all people have access to the full range of quality health services they need, when and where they need them, without financial hardship. Every year, roughly 100 million people are pushed into extreme poverty because they have to pay for health care out of their own pockets. Investing in primary health care is the most cost-effective route to coverage.',
+  },
+  {
+    url: 'https://www.brookings.edu/research/automation-and-the-future-of-work',
+    domain: 'brookings.edu',
+    title: 'Automation and the future of work',
+    sourceType: 'reference',
+    text:
+      'Automation will not produce mass unemployment overnight, but it will change the task content of most jobs and concentrate the disruption on routine, middle-wage occupations. Workers without a college degree are the most exposed, and the policy response — portable benefits, wage insurance, and lifelong retraining — matters more than the pace of the technology itself.',
+  },
+  {
+    url: 'https://www.unesco.org/en/education-transforms-lives',
+    domain: 'unesco.org',
+    title: 'Education transforms lives',
+    sourceType: 'government',
+    text:
+      'Education is a human right, a public good and a public responsibility. It is the single most powerful lever we have to reduce poverty, improve health, achieve gender equality, and foster peace. Each additional year of schooling raises an individual’s earnings by around ten percent and lifts a country’s long-run growth rate.',
+  },
+  {
+    url: 'https://en.wikipedia.org/wiki/Gettysburg_Address',
+    domain: 'en.wikipedia.org',
+    title: 'Gettysburg Address — Wikipedia',
+    sourceType: 'reference',
+    text:
+      'Four score and seven years ago our fathers brought forth on this continent, a new nation, conceived in Liberty, and dedicated to the proposition that all men are created equal. Now we are engaged in a great civil war, testing whether that nation, or any nation so conceived and so dedicated, can long endure. Government of the people, by the people, for the people, shall not perish from the earth.',
+  },
+  {
+    url: 'https://www.themarshallproject.org/records/mass-incarceration-explainer',
+    domain: 'themarshallproject.org',
+    title: 'Mass incarceration, explained',
+    sourceType: 'news',
+    text:
+      'The United States incarcerates more people, both per capita and in absolute terms, than any other nation. Decades of mandatory minimum sentences, cash bail, and the war on drugs drove the prison population up fivefold, with the burden falling disproportionately on Black and low-income communities. Evidence shows that longer sentences deliver little additional deterrence once certainty of punishment is held constant.',
+  },
+  {
+    url: 'https://www.economist.com/leaders/the-case-for-nuclear-power',
+    domain: 'economist.com',
+    title: 'The case for nuclear power',
+    sourceType: 'news',
+    text:
+      'Nuclear power is the safest form of energy humanity has ever used, measured by deaths per unit of electricity generated, and it is the only proven low-carbon source that can supply firm, dispatchable power at scale. The real obstacles are not technical but financial and political: first-of-a-kind projects run over budget, and public fear is calibrated to accidents rather than to the steady toll of fossil fuels.',
+  },
 ];
 
 export class MockSourceSearchProvider implements SourceSearchProvider {
   readonly name = 'mock';
   readonly coverageNote =
-    'Local demonstration corpus of 6 seeded documents — not a live web search. ' +
-    'A real deployment plugs a search provider in behind the same interface.';
+    `Local demonstration corpus of ${SEED_CORPUS.length} seeded documents — not a live web search. ` +
+    'It only covers a handful of common debate topics; a real deployment plugs a web ' +
+    'search provider in behind the same interface for full coverage.';
 
   private readonly corpus: Array<SourceDoc & { grams: Set<string> }>;
 

@@ -1,4 +1,5 @@
 import { API_BASE } from './api';
+import { toast } from './ui/toast';
 import { clock } from './judgeApi';
 
 export type CoachPersona = 'supportive' | 'analytical' | 'strict' | 'executive' | 'debate-coach' | 'interview-coach';
@@ -59,7 +60,11 @@ export interface Progress {
 
 async function jf<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${r.status} ${path}`);
+  if (!r.ok) {
+    const msg = (await r.json().catch(() => ({}))).error || `${r.status} ${path}`;
+    toast.error(msg);
+    throw new Error(msg);
+  }
   return r.json() as Promise<T>;
 }
 

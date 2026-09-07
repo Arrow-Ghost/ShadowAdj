@@ -1,116 +1,379 @@
 ---
 import Base from '@/layouts/Base.astro';
+import GlassArtifact from '@/components/webgl/GlassArtifact';
 
-const pillars = [
+const engines = [
   {
-    title: 'Protecting Fair Competition',
-    body: 'Protects honest debaters who spend months preparing for tournaments by surfacing non-disruptive alerts when multiple speech & linguistic signals indicate unusual AI assistance patterns.',
+    k: '01',
+    name: 'Reflection',
+    tag: 'the console',
+    body: 'Live speech becomes descriptive metrics — pace, pauses, filler rate, vocabulary variety, talk ratio, answer latency. Nothing is scored. The snapshot never contains a "verdict" or "authorship" field.',
+    href: '/console',
   },
   {
-    title: 'Adjudicator-Centric HUD',
-    body: 'Adjudicators remain focused on flowing arguments, assessing clashes, and preparing oral adjudications. ShadowADJ acts as a quiet background assistant.',
+    k: '02',
+    name: 'Judging',
+    tag: 'the rubric',
+    body: 'A rubric turns a session into a per-criterion evaluation: a proposed score, quoted evidence, a confidence level, strengths, weaknesses, reasoning. A human overrides any criterion — both scores are kept.',
+    href: '/judge',
   },
   {
-    title: 'Human Stays in Control',
-    body: 'Never outputs an automatic cheating verdict or alters debate scores. Signals are timestamped evidence markers for human consideration.',
+    k: '03',
+    name: 'Integrity',
+    tag: 'the review',
+    body: 'Source matches, cross-participant overlap and style shifts are aggregated into a risk level — never a probability. It produces a case for a named reviewer. Only a human confirms anything.',
+    href: '/review',
   },
 ];
 
-const pipelineSteps = [
-  { step: '01', title: 'Live Debate Audio', desc: 'Real-time 16kHz PCM audio stream capture via AudioWorklet & WebSocket transport.' },
-  { step: '02', title: 'VAD & Speaker Diarization', desc: 'Streaming voice activity detection & multi-speaker turn labeling.' },
-  { step: '03', title: 'Real-Time STT', desc: 'Low-latency multimodal speech-to-text with seam deduplication.' },
-  { step: '04', title: 'Feature Extraction', desc: 'WPM pace, pause counts, MATTR vocabulary variety, filler frequency, & style baselines.' },
-  { step: '05', title: 'Integrity Risk Engine', desc: 'Synthesizes unattributed source quotes, style shifts, & session anomalies into timestamped alerts.' },
+const pipeline = [
+  { k: 'Capture', d: '16 kHz PCM audio over a WebSocket. Consent is acknowledged in the UI before a session can start.' },
+  { k: 'Analyse', d: 'Streaming voice-activity detection and a windowed analyzer derive cadence, pauses and filler patterns.' },
+  { k: 'Snapshot', d: 'A descriptive snapshot every 500 ms. Metrics stay hidden until there is enough audio to be meaningful.' },
+  { k: 'Rubric', d: 'Each criterion carries a scale, anchors and evaluation rules — debate, interview, speech or hackathon presets.' },
+  { k: 'Judge', d: 'One model call per criterion returns a score with quoted evidence. A deterministic guard can only lower its confidence.' },
+  { k: 'Evidence', d: 'Top evidence is mirrored onto a timeline. A human adjusts any criterion; the AI score is never discarded.' },
+  { k: 'Integrity', d: 'Under the event policy, independent signals are aggregated. No single origin can reach HIGH on its own.' },
+  { k: 'Case', d: 'A review case with evidence and a recommendation. A named reviewer records the decision; appeals are supported.' },
 ];
 
-const surfaces = [
-  { href: '/console', label: 'Practice Console', note: 'Live mic capture & real-time telemetry', accent: 'text-cyan' },
-  { href: '/judge', label: 'Adjudicator HUD', note: 'Rubric scoring & live round monitoring', accent: 'text-cyan' },
-  { href: '/review', label: 'Case Review', note: 'Multi-signal integrity evidence & audit graph', accent: 'text-amber' },
-  { href: '/coach', label: 'Coach Engine', note: 'Adaptive speech & rebuttal drills', accent: 'text-mint' },
-  { href: '/admin', label: 'Tournament Admin', note: 'Leaderboard, consensus spread, & analytics', accent: 'text-white/70' },
+const metrics = [
+  ['Speaking pace', 'Words per minute, smoothed over the last 30 s of speech, with a plain descriptor.'],
+  ['Pauses', 'Count, mean and longest silence over ~0.6 s during an answer.'],
+  ['Filler rate', 'Hard fillers (um, uh) separated from discourse markers (like, you know); "like" is context-gated.'],
+  ['Vocabulary variety', 'A moving-average type-token ratio that stays stable as the transcript grows.'],
+  ['Talk / silence', 'Share of the session spent speaking versus quiet.'],
+  ['Answer latency', 'Time from a marked question to the first words of the reply.'],
+];
+
+const overlaps = [
+  ['Direct copying', 'High word-for-word overlap with a searched source, no attribution heard.'],
+  ['Paraphrase', 'Same structure and claims, reworded - flagged lower, with the caveat.'],
+  ['Legitimate citation', '"According to..." or a direct quote - detected and de-weighted, not penalised.'],
+  ['Common knowledge', 'Generic phrasing scores low on distinctiveness and is filtered out.'],
+  ['Cross-participant', 'Distinctive phrasing that appears in another submission in the same event.'],
+  ['Style discontinuity', 'A shift from the speaker’s own prior sessions - weak, corroborating evidence only.'],
+];
+
+const useCases = [
+  { k: 'Debate', d: 'Rounds, clashes and rebuttals with a six-criterion rubric and cross-participant checks.' },
+  { k: 'Interview prep', d: 'Behavioural answers scored on knowledge, structure, relevance and composure - latency as context.' },
+  { k: 'Speech coaching', d: 'Keynotes and toasts: structure, delivery, clarity and persuasion, with pace judged against content.' },
+  { k: 'Hackathon pitch', d: 'Problem, innovation, feasibility and impact - Q&A handling read through response latency.' },
 ];
 ---
 
-<Base title="ShadowADJ — Real-Time AI Assistance Monitoring for Competitive Debate">
-  <section class="relative mx-auto max-w-5xl px-4 pt-16 pb-12 sm:pt-24">
-    <div
-      aria-hidden
-      class="pointer-events-none absolute -top-24 left-[10%] h-80 w-[46rem] rounded-full bg-gradient-to-br from-cyan/20 via-mint/10 to-transparent blur-3xl"
-    >
-    </div>
+<Base
+  title="ShadowADJ - see how it was said, not just what"
+  description="A consent-first console: descriptive speech metrics, rubric-driven AI judging with human override, and integrity review that surfaces evidence - never a verdict."
+>
+  <script>
+    import '@/lib/ui/scroll-fx';
+  </script>
 
-    <div class="relative">
-      <div class="inline-flex items-center gap-2 rounded-full border border-cyan/30 bg-cyan/10 px-3 py-1 text-xs font-semibold text-cyan">
-        <span class="h-2 w-2 rounded-full bg-cyan animate-pulse"></span>
-        ShadowADJ v0.2 · Live Debate Assistance Monitoring
-      </div>
-      
-      <h1 class="text-gradient mt-6 max-w-4xl text-balance text-4xl font-bold leading-[1.05] sm:text-6xl">
-        Real-Time AI Assistance Monitoring for Competitive Debate
+  {/* ══════════════════════════ 01 · HERO ══════════════════════════ */}
+  <section id="hero" class="accent-teal relative mx-auto grid min-h-[92vh] max-w-6xl grid-cols-1 items-center gap-10 px-5 pb-24 pt-14 lg:grid-cols-12">
+    <div data-hero-copy class="lg:col-span-6">
+      <p class="eyebrow reveal">Speech is easy to perform &middot; hard to verify</p>
+      <h1 class="reveal mt-5 font-display text-[clamp(2.9rem,7vw,5.5rem)] font-light leading-[0.98] tracking-tightest text-mist-50">
+        See <span class="text-gradient italic">how</span> it was said,
+        <br class="hidden sm:block" />
+        not just <span class="text-gradient italic">what</span>.
       </h1>
-      
-      <p class="mt-6 max-w-3xl text-[15px] leading-relaxed text-white/70 sm:text-lg">
-        ShadowADJ runs quietly in the background during live debate rounds, analyzing speech for signals that may indicate undisclosed AI assistance. It gives adjudicators timestamped evidence while keeping human judges firmly in control.
+      <p class="reveal mt-6 max-w-lg text-[15px] leading-relaxed text-mist-300">
+        ShadowADJ is a consent-first console. It shows descriptive metrics about how a person is speaking,
+        scores a session against a rubric with quoted evidence and a human override, and surfaces integrity
+        signals as evidence for a reviewer - <span class="text-mist-100">never a verdict</span>.
       </p>
+      <div class="reveal mt-9 flex flex-wrap items-center gap-3">
+        <a href="/console" data-magnetic data-cursor="hover" class="btn btn-primary">Open the console</a>
+        <a href="#how" data-cursor="hover" class="btn btn-ghost">See how it works &darr;</a>
+      </div>
+      <dl class="reveal stagger mt-12 grid max-w-md grid-cols-3 gap-5 border-t border-white/[0.06] pt-6 font-mono text-[11px]">
+        <div><dt class="text-mist-500">Consent</dt><dd class="mt-1 text-mist-100">Server-enforced</dd></div>
+        <div><dt class="text-mist-500">Metrics</dt><dd class="mt-1 text-mist-100">Descriptive only</dd></div>
+        <div><dt class="text-mist-500">Decision</dt><dd class="mt-1 text-mist-100">Human, always</dd></div>
+      </dl>
+    </div>
 
-      <div class="mt-8 flex flex-wrap gap-4">
-        <a href="/judge" class="btn btn-primary text-sm px-5 py-2.5">
-          ▶ Open Adjudicator HUD & Simulator
-        </a>
-        <a href="/console" class="btn text-sm px-5 py-2.5">
-          🎙️ Open Practice Console
-        </a>
-        <a href="/about" class="btn text-sm px-5 py-2.5">
-          📘 Product Specification
-        </a>
+    <div class="reveal reveal-scale lg:col-span-6" data-no-reveal>
+      <div class="relative mx-auto flex items-center justify-center">
+        <GlassArtifact client:only="react" />
       </div>
     </div>
 
-    {/* Pillars */}
-    <div class="relative mt-16 grid gap-4 sm:grid-cols-3">
-      {
-        pillars.map((p) => (
-          <div class="glass p-6 transition duration-200 ease-pop hover:-translate-y-0.5 hover:border-white/20">
-            <h3 class="font-semibold text-white">{p.title}</h3>
-            <p class="mt-2 text-sm leading-relaxed text-white/60">{p.body}</p>
-          </div>
-        ))
-      }
+    <div class="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center" data-no-reveal>
+      <span class="eyebrow animate-breathe reveal text-mist-500">scroll</span>
     </div>
+  </section>
 
-    {/* Architecture Pipeline */}
-    <div class="relative mt-16 glass p-6 sm:p-8">
-      <h2 class="text-xs font-semibold uppercase tracking-[0.2em] text-cyan">Architecture Pipeline</h2>
-      <h3 class="mt-1 text-xl font-bold text-white">How ShadowADJ Processes Live Debates</h3>
-      <div class="mt-6 grid gap-4 sm:grid-cols-5">
-        {pipelineSteps.map((step) => (
-          <div class="rounded-xl border border-white/10 bg-black/40 p-4">
-            <span class="font-mono text-xs font-bold text-cyan/70">{step.step}</span>
-            <h4 class="mt-1 text-sm font-semibold text-white">{step.title}</h4>
-            <p class="mt-1.5 text-xs text-white/50 leading-relaxed">{step.desc}</p>
+  {/* ─────────────── capability ribbon (infinite marquee) ─────────────── */}
+  <div data-vel class="relative z-10 overflow-hidden border-y border-white/[0.06] bg-ink-900/40 py-3 backdrop-blur-sm" data-no-reveal>
+    <div class="marquee gap-8 font-mono text-[11px] uppercase tracking-[0.2em] text-mist-500">
+      {[0, 1].map(() => (
+        <div class="flex shrink-0 gap-8 pr-8">
+          {['consent-gated sessions', 'descriptive metrics', 'rubric + quoted evidence', 'human override kept', 'risk levels, not probabilities', 'no single signal reaches HIGH alone', 'append-only audit trail', 'session artifact hashing'].map((t) => (
+            <span class="flex items-center gap-3"><span class="h-1 w-1 rounded-full" style="background:var(--acc,#63b7ad)"></span>{t}</span>
+          ))}
+        </div>
+      ))}
+    </div>
+  </div>
+
+  {/* ══════════════════════════ 02 · THE PROBLEM ══════════════════════════ */}
+  <section id="chaos" class="accent-coral relative mx-auto max-w-4xl px-5 py-32 text-center">
+    <p class="eyebrow reveal">The problem</p>
+    <h2 data-wipe class="mx-auto mt-5 max-w-2xl font-display text-[clamp(2rem,4.5vw,3.4rem)] font-light leading-[1.05] text-mist-50">
+      It isn't more recording.
+      <br />
+      It's knowing what to trust.
+    </h2>
+    <p class="reveal mx-auto mt-6 max-w-xl text-[15px] leading-relaxed text-mist-300">
+      An adjudicator is already flowing arguments, tracking rebuttals and preparing a decision. They can't
+      also be a real-time investigator. Honest speakers lose to an advantage no one had the bandwidth to see.
+    </p>
+
+    <div class="relative mx-auto mt-14 h-52 max-w-3xl">
+      {['pace 148 wpm', '3 pauses', 'filler 2.1/min', 'MATTR 0.71', '"according to the 2025 report..."', 'talk ratio 62%', 'latency 1.8 s', 'variety +12%', '"the price signal disappears"'].map((f, i) => (
+        <span
+          data-fragment
+          class={`glass-hair absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap px-3 py-1.5 font-mono text-[11px] ${i % 3 === 0 ? 'text-teal/80' : 'text-mist-300'}`}
+        >{f}</span>
+      ))}
+      <div data-order-line class="absolute left-0 right-0 top-1/2 h-px origin-left bg-gradient-to-r from-transparent via-teal/60 to-transparent"></div>
+    </div>
+    <p class="reveal mt-4 font-mono text-[11px] uppercase tracking-[0.24em] text-mist-500">the same signals, reorganised</p>
+  </section>
+
+  {/* ══════════════════════════ 03 · WHAT IT IS ══════════════════════════ */}
+  <section id="what" class="accent-sky relative mx-auto max-w-5xl px-5 py-24">
+    <div class="grid gap-x-16 gap-y-10 md:grid-cols-2">
+      {[
+        ['What is it?', 'A browser console plus a small backend. It listens with permission, shows how someone is speaking, and - separately - helps a human score and review a session.'],
+        ['Why does it matter?', 'Competitions and interviews assume everyone plays by the same rules. When they don’t, the person who prepared honestly pays for it silently.'],
+        ['How does it work?', 'Audio to a streaming analyzer to a descriptive snapshot. Rubric to one model call per criterion to evidence and confidence. Transcript to source and cross-participant matching to a review case.'],
+        ['Who is it for?', 'Debaters and their adjudicators, interview candidates and panels, speech coaches, hackathon judges, and the organisers who set the policy.'],
+      ].map(([q, a]) => (
+        <div class="reveal">
+          <h3 class="font-display text-xl font-normal text-mist-100">{q}</h3>
+          <p class="mt-2.5 text-[14px] leading-relaxed text-mist-400">{a}</p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  {/* ══════════════════════════ 04 · THREE ENGINES ══════════════════════════ */}
+  <section class="accent-iris relative mx-auto max-w-6xl px-5 py-24">
+    <p class="eyebrow reveal">Three engines, one boundary</p>
+    <h2 data-wipe class="mt-5 max-w-2xl font-display text-[clamp(1.9rem,4vw,3rem)] font-light leading-[1.08] text-mist-50">
+      Reflection, judging and integrity never share a score.
+    </h2>
+    <div class="mt-14 grid gap-4 lg:grid-cols-3">
+      {engines.map((e, i) => (
+        <a
+          href={e.href}
+          data-cursor="hover"
+          data-tilt="6"
+          class={`glass-interactive sheen group reveal flex flex-col p-7 ${i === 0 ? 'reveal-left' : i === 2 ? 'reveal-right' : 'reveal-pop lg:-translate-y-4'}`}
+        >
+          <span class="sheen-bar"></span>
+          <div class="flex items-baseline justify-between">
+            <span class="font-mono text-[11px] tracking-[0.24em] text-mist-500">{e.k}</span>
+            <span class="eyebrow">{e.tag}</span>
+          </div>
+          <h3 class="mt-5 font-display text-2xl font-normal text-mist-50">{e.name}</h3>
+          <p class="mt-3 flex-1 text-[13.5px] leading-relaxed text-mist-400">{e.body}</p>
+          <span class="mt-6 font-mono text-[11px] transition-transform group-hover:translate-x-1" style="color:var(--acc)">enter &rarr;</span>
+        </a>
+      ))}
+    </div>
+    <p class="reveal mt-8 max-w-xl text-[13px] leading-relaxed text-mist-500">
+      A judge evaluation carries <span class="text-mist-300">no</span> integrity signal, and an integrity case
+      carries <span class="text-mist-300">no</span> score. Performance and originality are answered by
+      different people looking at different evidence.
+    </p>
+  </section>
+
+  {/* ══════════════════════════ 05 · HOW IT WORKS (pinned) ══════════════════════════ */}
+  <section id="how" class="accent-teal relative">
+    <div id="pipeline" class="relative mx-auto flex min-h-screen max-w-6xl flex-col justify-center px-5 py-24">
+      <p class="eyebrow reveal">The path a session takes</p>
+      <h2 data-wipe class="mt-5 max-w-xl font-display text-[clamp(1.9rem,4vw,3rem)] font-light leading-[1.08] text-mist-50">
+        Capture to case, one continuous line.
+      </h2>
+      <div class="mt-14 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {pipeline.map((s, i) => (
+          <div data-stage class="glass flex flex-col p-5">
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-[11px]" style="color:var(--acc)">{String(i + 1).padStart(2, '0')}</span>
+              <span class="h-px flex-1 origin-left bg-white/10" data-flow></span>
+            </div>
+            <h3 class="mt-3 font-display text-lg font-normal text-mist-50">{s.k}</h3>
+            <p class="mt-2 text-[12.5px] leading-relaxed text-mist-400">{s.d}</p>
           </div>
         ))}
       </div>
     </div>
+  </section>
 
-    {/* Core Application Surfaces */}
-    <div class="relative mt-14">
-      <p class="metric-label text-cyan">Application Modules</p>
-      <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {
-          surfaces.map((s) => (
-            <a
-              href={s.href}
-              class="glass group flex flex-col gap-1.5 p-5 transition duration-200 ease-pop hover:-translate-y-0.5 hover:border-cyan/40"
-            >
-              <span class={`text-sm font-semibold ${s.accent}`}>{s.label}</span>
-              <span class="text-[12px] leading-snug text-white/50">{s.note}</span>
-              <span class="mt-2 text-[11px] font-medium text-cyan/60 group-hover:text-cyan">Open Module →</span>
-            </a>
-          ))
-        }
+  {/* ══════════════════════════ 06 · DESCRIPTIVE METRICS ══════════════════════════ */}
+  <section class="accent-sky relative mx-auto max-w-5xl px-5 py-24">
+    <div class="grid gap-12 lg:grid-cols-[0.9fr_1.1fr]">
+      <div class="reveal">
+        <p class="eyebrow">The console shows</p>
+        <h2 class="mt-5 font-display text-[clamp(1.9rem,4vw,3rem)] font-light leading-[1.08] text-mist-50">
+          A mirror, held steady.
+        </h2>
+        <p class="mt-6 text-[14px] leading-relaxed text-mist-400">
+          Every value is descriptive and appears only once there is enough audio to be meaningful. The person
+          being recorded sees exactly this dashboard - there is no hidden view.
+        </p>
+        <a href="/console" data-cursor="hover" class="btn btn-ghost mt-8">Try it live</a>
+      </div>
+      <ul class="stagger reveal divide-y divide-white/[0.06] rounded-2xl border border-white/[0.07] bg-white/[0.015]">
+        {metrics.map(([k, d]) => (
+          <li class="flex flex-col gap-1 p-5 sm:flex-row sm:items-baseline sm:gap-6">
+            <span class="w-40 shrink-0 font-mono text-[12px] uppercase tracking-[0.14em] text-mist-200">{k}</span>
+            <span class="text-[13px] leading-relaxed text-mist-400">{d}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  {/* ══════════════════════════ 07 · THE ORIGINALITY MOMENT ══════════════════════════ */}
+  <section id="originality" class="accent-amber relative mx-auto max-w-5xl overflow-hidden px-5 py-36 text-center">
+    <p class="eyebrow reveal">When phrasing lines up</p>
+    <div class="relative mx-auto mt-12 flex max-w-3xl items-stretch justify-center">
+      <div data-panel-a class="glass w-1/2 max-w-xs p-5 text-left">
+        <span class="metric-label">This submission</span>
+        <p class="mt-3 text-[12.5px] leading-relaxed text-mist-300">
+          "...the safest form of energy humanity has ever used, measured by deaths per unit of electricity
+          generated..."
+        </p>
+      </div>
+      <div data-overlap class="mx-2 w-px origin-center bg-gradient-to-b from-transparent via-teal to-transparent shadow-[0_0_24px_rgba(111,180,172,0.5)]"></div>
+      <div data-panel-b class="glass w-1/2 max-w-xs p-5 text-left">
+        <span class="metric-label">Searched source</span>
+        <p class="mt-3 text-[12.5px] leading-relaxed text-mist-300">
+          economist.com - "...the safest form of energy humanity has ever used, measured by deaths per unit of
+          electricity generated..."
+        </p>
+      </div>
+    </div>
+    <p data-look-closer class="mt-10 font-display text-3xl font-light italic" style="color:var(--acc)">Look closer.</p>
+    <p class="reveal mx-auto mt-4 max-w-xl text-[14px] leading-relaxed text-mist-400">
+      The integrity engine separates direct copying from paraphrase, legitimate citation, common knowledge and
+      cross-participant overlap - each with a similarity figure and a confidence level, not a probability.
+    </p>
+    <div class="stagger reveal mx-auto mt-12 grid max-w-3xl gap-3 text-left sm:grid-cols-2">
+      {overlaps.map(([k, d]) => (
+        <div class="glass-hair p-4">
+          <span class="font-mono text-[11px] uppercase tracking-[0.14em] text-mist-200">{k}</span>
+          <p class="mt-1.5 text-[12.5px] leading-relaxed text-mist-500">{d}</p>
+        </div>
+      ))}
+    </div>
+    <p class="reveal mx-auto mt-10 max-w-lg text-[12px] leading-relaxed text-mist-600">
+      Similarity to a source can mean research, common knowledge or coincidence. Nothing here is presented as
+      proven unless a named human reviewer explicitly confirms it.
+    </p>
+  </section>
+
+  {/* ══════════════════════════ 08 · JUDGING, WITH A HUMAN ══════════════════════════ */}
+  <section class="accent-iris relative mx-auto max-w-6xl px-5 py-24">
+    <div class="grid gap-12 lg:grid-cols-2 lg:items-center">
+      <div class="reveal">
+        <p class="eyebrow">The judge HUD</p>
+        <h2 class="mt-5 font-display text-[clamp(1.9rem,4vw,3rem)] font-light leading-[1.08] text-mist-50">
+          AI proposes. You dispose. Both scores are kept.
+        </h2>
+        <p class="mt-6 text-[14px] leading-relaxed text-mist-400">
+          Every criterion returns a score, quoted evidence with timestamps, and a confidence level. A
+          deterministic guard can only <em>lower</em> that confidence - for a short answer, thin speaking time,
+          or no evidence located - and it says why. Override any criterion; finalise; reopen.
+        </p>
+      </div>
+      <div data-tilt="5" class="reveal reveal-right glass p-6">
+        <div class="flex items-center justify-between">
+          <span class="font-mono text-[12px] text-mist-200">Rebuttal</span>
+          <span class="glass-pill">Medium confidence</span>
+        </div>
+        <div class="mt-4 flex items-baseline gap-3">
+          <span class="font-mono text-4xl text-mist-50">7</span>
+          <span class="text-[12px] text-mist-500">AI proposed 6 &rarr; human 7</span>
+        </div>
+        <p class="mt-3 text-[12px] text-signal-warn/90">Confidence limited by: short response (96 words)</p>
+        <div class="mt-4 border-t border-white/[0.06] pt-3">
+          <span class="metric-label">Evidence</span>
+          <p class="mt-1.5 text-[12.5px] text-mist-300">
+            <span class="font-mono text-mist-500">03:14-03:29</span> "they never actually answer the
+            mechanism..." <span class="text-mist-500">- directly addresses the opponent's strongest point</span>
+          </p>
+        </div>
+        <div class="mt-4 flex gap-2">
+          <span class="btn btn-ghost !py-1 !px-3 !text-[11px]">Adjust</span>
+          <span class="btn btn-ghost !py-1 !px-3 !text-[11px]">Finalise</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ══════════════════════════ 09 · WHERE IT FITS ══════════════════════════ */}
+  <section class="accent-teal relative mx-auto max-w-6xl px-5 py-24">
+    <p class="eyebrow reveal">Where it fits</p>
+    <h2 data-wipe class="mt-5 max-w-xl font-display text-[clamp(1.9rem,4vw,3rem)] font-light leading-[1.08] text-mist-50">
+      Four rubrics, one workflow.
+    </h2>
+    <div class="stagger reveal mt-14 grid gap-4 sm:grid-cols-2">
+      {useCases.map((u) => (
+        <div data-tilt="5" data-cursor="hover" class="glass sheen flex items-start gap-5 p-6">
+          <span class="sheen-bar"></span>
+          <span class="mt-1 font-mono text-[11px]" style="color:var(--acc)">/{u.k.toLowerCase().split(' ')[0]}</span>
+          <div>
+            <h3 class="font-display text-lg font-normal text-mist-50">{u.k}</h3>
+            <p class="mt-2 text-[13px] leading-relaxed text-mist-400">{u.d}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  {/* ══════════════════════════ 10 · TRUST & LIMITS ══════════════════════════ */}
+  <section class="accent-sky relative mx-auto my-16 max-w-5xl overflow-hidden rounded-[2rem] border border-white/[0.08] bg-white/[0.025] px-6 py-20 backdrop-blur-xl sm:px-14">
+    <p class="eyebrow reveal">Trust, and its limits</p>
+    <h2 class="reveal mt-5 max-w-2xl font-display text-[clamp(1.8rem,3.6vw,2.8rem)] font-light leading-[1.1] text-mist-50">
+      The guardrails are in the code, not the copy.
+    </h2>
+    <div class="mt-12 grid gap-x-14 gap-y-8 md:grid-cols-2">
+      {[
+        ['Consent is a gate', 'A session returns 403 until both parties acknowledge in the UI. There is no covert mode.'],
+        ['No suspicion baseline', 'A style baseline exists only as the speaker’s own progress comparison - weak, corroborating evidence at most.'],
+        ['Digests, not dumps', 'Model calls send structured metric and timeline summaries and stamped transcript lines, capped in length.'],
+        ['Tamper-evident', 'An append-only audit trail, and a SHA-256 hash of the session artifacts so a later edit is detectable.'],
+        ['Evidence, not verdict', 'Only a named reviewer can confirm an integrity case. Participants get a redacted view and can appeal.'],
+        ['Honest coverage', 'Source search currently runs against a small demo corpus; a real web provider drops in behind one interface.'],
+      ].map(([k, d]) => (
+        <div class="reveal">
+          <h3 class="text-[14px] font-medium text-mist-100">{k}</h3>
+          <p class="mt-1.5 text-[13px] leading-relaxed text-mist-400">{d}</p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  {/* ══════════════════════════ 11 · FINAL CTA ══════════════════════════ */}
+  <section id="final-cta" class="accent-iris relative mx-auto max-w-4xl px-5 py-36 text-center">
+    <div data-cta-shell class="glass mx-auto max-w-2xl px-8 py-16">
+      <p class="eyebrow">One line to remember</p>
+      <h2 class="mx-auto mt-5 max-w-xl font-display text-[clamp(2rem,4.5vw,3.4rem)] font-light leading-[1.03] text-mist-50">
+        The tool reflects.
+        <br />
+        The human decides.
+      </h2>
+      <div class="mt-10 flex flex-wrap items-center justify-center gap-3">
+        <a href="/console" data-magnetic data-cursor="hover" class="btn btn-primary">Open the console</a>
+        <a href="/judge" data-cursor="hover" class="btn btn-ghost">Explore the Judge HUD</a>
       </div>
     </div>
   </section>

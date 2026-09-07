@@ -6,7 +6,12 @@ import { TranscriptionPump, dedupeJoin } from './transcription-pump.ts';
 const MODELS = { transcribe: ['t'], coach: ['c'], judge: ['j'], similarity: ['s'], summarize: ['sm'] };
 
 function pcm(seconds: number): Buffer {
-  return Buffer.alloc(16_000 * 2 * seconds); // silent, size is what matters to the pump
+  // A low tone, not silence — the pump now drops near-silent streaming chunks,
+  // so a plumbing test needs audio with real energy. Size still drives chunking.
+  const n = 16_000 * seconds;
+  const b = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i += 1) b.writeInt16LE(Math.round(Math.sin(i * 0.06) * 6000), i * 2);
+  return b;
 }
 
 test('multilingual pump: emits deltas with dominant language + latest speaker', async () => {

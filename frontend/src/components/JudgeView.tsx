@@ -16,11 +16,14 @@ import {
   type JudgeEvaluation,
   type TimelineEvent,
 } from '@/lib/judgeApi';
+import { getSessionIntegrity, runIntegrity, type IntegrityCase } from '@/lib/reviewApi';
+import { readOriginality, type OriginalityRead } from '@/lib/originality';
+import { toast } from '@/lib/ui/toast';
 
 const CONF: Record<Confidence, { label: string; cls: string }> = {
-  high: { label: 'High confidence', cls: 'border-mint/40 bg-mint/10 text-mint' },
-  medium: { label: 'Medium confidence', cls: 'border-cyan/40 bg-cyan/10 text-cyan' },
-  low: { label: 'Low confidence', cls: 'border-amber/40 bg-amber/10 text-amber' },
+  high: { label: 'High confidence', cls: 'border-signal-ok/40 bg-signal-ok/10 text-signal-ok' },
+  medium: { label: 'Medium confidence', cls: 'border-teal/40 bg-teal/10 text-teal' },
+  low: { label: 'Low confidence', cls: 'border-signal-warn/40 bg-signal-warn/10 text-signal-warn' },
 };
 
 function Pill({ conf }: { conf: Confidence }) {
@@ -44,16 +47,52 @@ export default function JudgeView() {
   const [evaluation, setEvaluation] = useState<JudgeEvaluation | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [rubrics, setRubrics] = useState<{ id: string; name: string }[]>([]);
-  const [allSessions, setAllSessions] = useState<Array<{ id: string; label: string }>>([]);
+  const [allSessions, setAllSessions] = useState<
+    Array<{ id: string; label: string; eventId?: string | null }>
+  >([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Originality / plagiarism check (Integrity Engine, shown here as read-only).
+  const [orig, setOrig] = useState<IntegrityCase | null>(null);
+  const [origBusy, setOrigBusy] = useState(false);
+
   useEffect(() => {
-    fetch(`${API_BASE}/api/sessions?limit=24`)
+    fetch(`${API_BASE}/api/sessions?limit=100`)
       .then((r) => r.json())
       .then((rows) => setAllSessions(rows))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setSessionsLoaded(true));
   }, []);
+
+  async function loadOriginality(sid: string) {
+    try {
+      const r = await getSessionIntegrity(sid);
+      setOrig(r.cases?.[0] ?? null);
+    } catch {
+      /* not analysed yet — the panel shows a "check" button */
+    }
+  }
+
+  async function runOriginality() {
+    const sid = evaluation?.sessionId ?? sessionId;
+    if (!sid) return;
+    setOrigBusy(true);
+    try {
+      const r = await runIntegrity(sid);
+      if (r.case) {
+        setOrig(r.case);
+        toast.success('Originality check complete');
+      } else {
+        toast('This event permits AI assistance — recorded as disclosure analytics, no case.');
+      }
+    } catch {
+      /* jf() already toasted the error */
+    } finally {
+      setOrigBusy(false);
+    }
+  }
 
   async function load() {
     setError(null);
@@ -62,12 +101,17 @@ export default function JudgeView() {
         const ev = await getEvaluation(evalIdParam);
         setEvaluation(ev);
         setTimeline(await getTimeline(ev.sessionId));
+        void loadOriginality(ev.sessionId);
         return;
       }
       if (!sessionId) return;
       const list = await listEvaluations(sessionId);
       setEvaluation(list.at(-1) ?? null);
       setTimeline(await getTimeline(sessionId));
+      void loadOriginality(sessionId);
+      // Always load the rubric list: a session that isn't attached to an event
+      // can only be judged by passing an explicit rubric, so the picker below is
+      // its only working path.
       if (list.length === 0) setRubrics(await listRubrics().catch(() => []));
     } catch (e: any) {
       setError(e.message);
@@ -78,6 +122,11 @@ export default function JudgeView() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, evalIdParam]);
+
+  const currentSession = allSessions.find((s) => s.id === sessionId);
+  // Only offer the "event rubric" run once we know the session actually has an
+  // event — otherwise that button always 400s ("no rubric: pass rubricId …").
+  const sessionHasEvent = Boolean(currentSession?.eventId);
 
   async function doRun(rubricId?: string) {
     if (!sessionId) return;
@@ -183,14 +232,14 @@ export default function JudgeView() {
                 disabled={busy}
                 onClick={() => startSimulation('elevated')}
               >
-                {busy ? 'Launching…' : '▶ Launch Live Round (Elevated Risk Signal)'}
+                {busy ? 'Launching…' : 'Launch Live Round (Elevated Risk Signal)'}
               </button>
               <button
                 className="btn"
                 disabled={busy}
                 onClick={() => startSimulation('clean')}
               >
-                {busy ? 'Launching…' : '▶ Launch Live Round (Clean Standard)'}
+                {busy ? 'Launching…' : 'Launch Live Round (Clean Standard)'}
               </button>
             </div>
           </div>
@@ -212,13 +261,26 @@ export default function JudgeView() {
             Run the AI judge against this session. It scores every rubric criterion with evidence, confidence
             and reasoning — a recommendation you can adjust.
           </p>
+          {sessionsLoaded && !sessionHasEvent && (
+            <p className="mt-2 text-xs text-amber/80">
+              This session isn’t attached to an event, so there’s no event rubric to inherit. Pick a rubric
+              below to score it{rubrics.length === 0 ? ' (create one under Admin first)' : ''}.
+            </p>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
-            <button className="btn btn-primary" disabled={busy} onClick={() => doRun()}>
-              {busy ? 'Judging…' : 'Run evaluation (event rubric)'}
-            </button>
-            {rubrics.map((r) => (
-              <button key={r.id} className="btn" disabled={busy} onClick={() => doRun(r.id)}>
-                Use “{r.name}”
+            {sessionHasEvent && (
+              <button className="btn btn-primary" disabled={busy} onClick={() => doRun()}>
+                {busy ? 'Judging…' : 'Run evaluation (event rubric)'}
+              </button>
+            )}
+            {rubrics.map((r, i) => (
+              <button
+                key={r.id}
+                className={`btn ${!sessionHasEvent && i === 0 ? 'btn-primary' : ''}`}
+                disabled={busy}
+                onClick={() => doRun(r.id)}
+              >
+                {busy && !sessionHasEvent && i === 0 ? 'Judging…' : `Use “${r.name}”`}
               </button>
             ))}
           </div>
@@ -361,6 +423,13 @@ export default function JudgeView() {
             ))}
           </div>
 
+          <OriginalityPanel
+            sessionId={evaluation.sessionId}
+            data={orig}
+            busy={origBusy}
+            onRun={runOriginality}
+          />
+
           {timeline.length > 0 && (
             <div className="glass mt-4 p-5">
               <h3 className="mb-2 text-sm font-semibold text-white/80">Evidence timeline</h3>
@@ -388,10 +457,157 @@ export default function JudgeView() {
           )}
 
           <p className="mt-4 text-[11px] text-white/35">
-            This is a performance evaluation. It says nothing about originality or outside assistance — that is
-            a separate review, not folded into these scores.
+            The scores above are a performance evaluation and do <em>not</em> factor in the originality signals
+            below — similarity is evidence for a human, never a scoring penalty on its own.
           </p>
         </>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- originality panel --------------------------- */
+
+const ORIG_TONE: Record<OriginalityRead['label'], { ring: string; text: string; bar: string }> = {
+  original: { ring: 'border-mint/40', text: 'text-mint', bar: '#00FF9C' },
+  'mostly-original': { ring: 'border-cyan/40', text: 'text-cyan', bar: '#00D4FF' },
+  'notable-overlap': { ring: 'border-amber/40', text: 'text-amber', bar: '#FFB800' },
+  'heavy-overlap': { ring: 'border-rose/40', text: 'text-rose', bar: '#FF5C7A' },
+};
+
+function OriginalityPanel({
+  sessionId,
+  data,
+  busy,
+  onRun,
+}: {
+  sessionId: string;
+  data: IntegrityCase | null;
+  busy: boolean;
+  onRun: () => void;
+}) {
+  const read = data ? readOriginality(data) : null;
+
+  return (
+    <div className="glass mt-4 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-white/85">Originality &amp; source check</h3>
+        <div className="flex items-center gap-2">
+          <a href={`/review?session=${encodeURIComponent(sessionId)}`} className="text-[11px] text-cyan hover:underline">
+            Open full review →
+          </a>
+          <button className="btn !px-3 !py-1 text-[11px]" disabled={busy} onClick={onRun}>
+            {busy ? 'Checking…' : read ? 'Re-check' : 'Check now'}
+          </button>
+        </div>
+      </div>
+
+      {busy && !read && (
+        <div className="mt-3 space-y-2">
+          <div className="skeleton h-6 w-40" />
+          <div className="skeleton h-16" />
+        </div>
+      )}
+
+      {!busy && !read && (
+        <p className="mt-2 text-sm text-white/55">
+          Runs the Integrity Engine against this answer: how much of the distinctive phrasing traces to an
+          external source, how word-for-word the overlap is, whether it was attributed, and any overlap with
+          another debater in the same event.
+        </p>
+      )}
+
+      {read && (
+        <div className="mt-3">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border ${ORIG_TONE[read.label].ring} bg-black/30`}>
+              <span className={`font-mono text-xl font-bold ${ORIG_TONE[read.label].text}`}>{read.index}</span>
+            </div>
+            <div className="min-w-[12rem] flex-1">
+              <p className={`text-sm font-semibold ${ORIG_TONE[read.label].text}`}>{read.headline}</p>
+              <div className="bar-track mt-1.5 h-1.5 overflow-hidden rounded-full">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${Math.max(3, read.index)}%`, background: ORIG_TONE[read.label].bar }}
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-white/40">
+                Originality index (100 = nothing traced to a source) · risk {read.riskLevel} · {read.confidence} confidence
+              </p>
+            </div>
+          </div>
+
+          <p className="mt-3 text-xs text-white/60">
+            <span className="text-white/80">How it reads:</span>{' '}
+            {read.naturalness === 'reads-rehearsed'
+              ? 'assembled / rehearsed'
+              : read.naturalness === 'reads-natural'
+                ? 'spontaneous'
+                : 'unclear'}{' '}
+            — {read.naturalnessNote}
+          </p>
+
+          {read.sources.length > 0 ? (
+            <div className="mt-3">
+              <div className="metric-label">
+                Matched sources — {read.matchedPhraseCount} distinctive phrase{read.matchedPhraseCount === 1 ? '' : 's'}
+                {read.unattributedCount > 0 && `, ${read.unattributedCount} without attribution`}
+              </div>
+              <ul className="mt-1.5 space-y-2">
+                {read.sources.map((s, i) => (
+                  <li key={i} className="rounded-lg border border-white/5 bg-black/15 p-2.5 text-xs">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <a href={s.url} target="_blank" rel="noreferrer noopener" className="font-medium text-cyan hover:underline">
+                        {s.domain}
+                      </a>
+                      <span className="text-white/30">
+                        {s.sourceType} · credibility {Math.round(s.credibility * 100)}%
+                      </span>
+                      <span className={`rounded-full border px-1.5 py-0.5 text-[10px] ${s.attributed ? 'border-mint/30 text-mint/80' : 'border-rose/30 text-rose/80'}`}>
+                        {s.attributed ? 'attributed' : 'no attribution'}
+                      </span>
+                      <span className="ml-auto font-mono text-white/70">{Math.round(s.peakSimilarity * 100)}% word-for-word</span>
+                    </div>
+                    <p className="mt-1 text-white/70">
+                      {s.atMs != null && <span className="font-mono text-white/35">{clock(s.atMs)} · </span>}
+                      “{s.phrase.slice(0, 160)}{s.phrase.length > 160 ? '…' : ''}”
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-white/45">
+              No distinctive phrasing matched the searched corpus.
+            </p>
+          )}
+
+          {read.crossParticipant.others.length > 0 && (
+            <div className="mt-3">
+              <div className="metric-label text-amber/70">
+                Overlap with another debater — up to {Math.round(read.crossParticipant.maxSimilarity * 100)}%
+              </div>
+              <ul className="mt-1 space-y-1 text-xs text-white/65">
+                {read.crossParticipant.others.map((o, i) => (
+                  <li key={i}>
+                    <span className="text-white/85">{o.label}</span> — {Math.round(o.similarity * 100)}% shared distinctive phrasing
+                    {o.phrases.length > 0 && (
+                      <ul className="mt-0.5 list-disc pl-4 text-white/40">
+                        {o.phrases.map((p, j) => (
+                          <li key={j}>“{p.slice(0, 100)}{p.length > 100 ? '…' : ''}”</li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <p className="mt-3 text-[11px] leading-relaxed text-white/35">
+            {read.searchCoverage} {read.caveat}
+          </p>
+        </div>
       )}
     </div>
   );

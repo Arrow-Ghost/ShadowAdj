@@ -41,9 +41,16 @@ interface ConsoleState {
   transcriptLive: string;
   transcribing: boolean;
   notices: string[];
-  set: (p: Partial<ConsoleState>) => void;
+  // Accepts a plain partial or an updater fn, mirroring zustand's own set().
+  // Console.tsx uses the updater form to derive the next transcript from the
+  // current snapshot.
+  set: (p: ConsolePatch) => void;
   reset: () => void;
 }
+
+type ConsolePatch =
+  | Partial<ConsoleState>
+  | ((state: ConsoleState) => Partial<ConsoleState>);
 
 const initial = {
   status: 'idle' as const,

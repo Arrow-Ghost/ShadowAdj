@@ -1,4 +1,5 @@
 import { API_BASE } from './api';
+import { toast } from './ui/toast';
 
 export type Confidence = 'low' | 'medium' | 'high';
 
@@ -55,7 +56,11 @@ async function jf<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
   });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${r.status} ${path}`);
+  if (!r.ok) {
+    const msg = (await r.json().catch(() => ({}))).error || `${r.status} ${path}`;
+    toast.error(msg);
+    throw new Error(msg);
+  }
   return r.json() as Promise<T>;
 }
 
