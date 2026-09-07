@@ -907,50 +907,81 @@ export default function Console() {
           </div>
 
           {/* Real-time Clock & Status Indicators */}
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="font-mono text-xl font-bold tracking-wider text-mint">
+          <div className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-end gap-3 sm:gap-4 w-full lg:w-auto">
+            <div className="text-left sm:text-right">
+              <div className="font-mono text-lg sm:text-xl font-bold tracking-wider text-mint leading-none">
                 {clock(snap?.elapsedMs ?? 0)}
               </div>
-              <div className="font-mono text-[10px] text-white/40 uppercase">
+              <div className="font-mono text-[9px] sm:text-[10px] text-white/40 uppercase mt-0.5">
                 ELAPSED SESSION TIME
               </div>
             </div>
 
             {/* Quick Action Buttons */}
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-4 gap-1.5 sm:flex sm:items-center sm:gap-2 w-full sm:w-auto">
               {step === 'live' && (
                 <>
                   <button
                     type="button"
                     onClick={() => { sendTimelineTag('question', 'Q'); toast('Question marked'); }}
-                    className="btn !px-3 !py-2 text-xs border-cyan/40 bg-cyan/10 text-cyan hover:bg-cyan/20"
+                    className="btn flex items-center justify-center gap-1 sm:gap-1.5 !px-2 sm:!px-3 !py-2 text-[11px] sm:text-xs font-semibold border-cyan/40 bg-cyan/10 text-cyan hover:bg-cyan/20 min-w-0"
                     title="Timestamp a question asked in this debate round (Q)"
                   >
-                    Mark Question <kbd className="ml-1">Q</kbd>
+                    <svg className="h-3.5 w-3.5 shrink-0 text-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M12 18h.01" />
+                    </svg>
+                    <span className="truncate">
+                      <span className="hidden md:inline">Mark </span>Question
+                    </span>
+                    <kbd className="ml-0.5 hidden sm:inline-block text-[10px]">Q</kbd>
                   </button>
                   <button
                     type="button"
                     onClick={() => { sendTimelineTag('clash', 'CLASH-'); toast('Clash marked'); }}
-                    className="btn !px-3 !py-2 text-xs border-amber/40 bg-amber/10 text-amber hover:bg-amber/20"
+                    className="btn flex items-center justify-center gap-1 sm:gap-1.5 !px-2 sm:!px-3 !py-2 text-[11px] sm:text-xs font-semibold border-amber/40 bg-amber/10 text-amber hover:bg-amber/20 min-w-0"
                     title="Timestamp an argument clash (C)"
                   >
-                    Clash <kbd className="ml-1">C</kbd>
+                    <svg className="h-3.5 w-3.5 shrink-0 text-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" />
+                      <line x1="13" y1="19" x2="19" y2="13" />
+                      <line x1="16" y1="16" x2="20" y2="20" />
+                      <line x1="19" y1="21" x2="21" y2="19" />
+                      <polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5" />
+                      <line x1="5" y1="14" x2="9.5" y2="18.5" />
+                      <line x1="7" y1="17" x2="4" y2="20" />
+                      <line x1="3" y1="19" x2="5" y2="21" />
+                    </svg>
+                    <span className="truncate">Clash</span>
+                    <kbd className="ml-0.5 hidden sm:inline-block text-[10px]">C</kbd>
                   </button>
                   <button
                     type="button"
                     onClick={() => { sendTimelineTag('poi', 'POI-'); toast('POI marked'); }}
-                    className="btn !px-3 !py-2 text-xs border-mint/40 bg-mint/10 text-mint hover:bg-mint/20"
+                    className="btn flex items-center justify-center gap-1 sm:gap-1.5 !px-2 sm:!px-3 !py-2 text-[11px] sm:text-xs font-semibold border-mint/40 bg-mint/10 text-mint hover:bg-mint/20 min-w-0"
                     title="Timestamp a Point of Information (P)"
                   >
-                    POI <kbd className="ml-1">P</kbd>
+                    <svg className="h-3.5 w-3.5 shrink-0 text-mint" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v4" />
+                      <path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v6" />
+                      <path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8" />
+                      <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+                    </svg>
+                    <span className="truncate">POI</span>
+                    <kbd className="ml-0.5 hidden sm:inline-block text-[10px]">P</kbd>
                   </button>
                   <button
                     type="button"
                     onClick={endSession}
-                    className="btn btn-danger !px-4 !py-2 text-xs font-bold shadow-[0_0_15px_rgba(255,92,122,0.4)]"
+                    className="btn btn-danger flex items-center justify-center gap-1 sm:gap-1.5 !px-2 sm:!px-4 !py-2 text-[11px] sm:text-xs font-bold shadow-[0_0_15px_rgba(255,92,122,0.4)] min-w-0"
+                    title="End debate session (E)"
                   >
-                    End Session
+                    <svg className="h-3.5 w-3.5 shrink-0 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="9" />
+                      <rect x="9" y="9" width="6" height="6" fill="currentColor" rx="1" />
+                    </svg>
+                    <span className="truncate">
+                      <span>End</span><span className="hidden sm:inline"> Session</span>
+                    </span>
                   </button>
                 </>
               )}
@@ -966,9 +997,12 @@ export default function Console() {
                       setCoaching({ notes: '', loading: false, error: null });
                       setIntegrity({ data: null, loading: false, error: null });
                     }}
-                    className="btn btn-primary !px-4 !py-2 text-xs font-bold"
+                    className="btn btn-primary flex items-center justify-center gap-1.5 !px-4 !py-2 text-xs font-bold w-full sm:w-auto"
                   >
-                    + New Session
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    New Session
                   </button>
                 </>
               )}
