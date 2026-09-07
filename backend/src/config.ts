@@ -46,17 +46,19 @@ const aiConfig = {
   },
 };
 
-// Accept a comma-separated CORS_ORIGIN list; always also allow the localhost /
-// 127.0.0.1 dev origins on any port so `localhost` vs `127.0.0.1` in the address
-// bar doesn't silently break the frontend's health check.
-const corsList = (process.env.CORS_ORIGIN || 'http://localhost:4321,http://127.0.0.1:4321')
-  .split(',')
+// Accept a comma-separated CORS_ORIGIN list; also allow localhost and any *.vercel.app deployment
+const corsEnv = process.env.CORS_ORIGIN;
+const corsList = (corsEnv ? corsEnv.split(',') : ['http://localhost:4321', 'http://127.0.0.1:4321'])
   .map((s) => s.trim())
   .filter(Boolean);
 
+const allowsAll = corsList.includes('*');
+
 export const config = {
   port: Number(process.env.PORT) || 8787,
-  corsOrigin: [...corsList, /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/] as (string | RegExp)[],
+  corsOrigin: allowsAll
+    ? true
+    : ([...corsList, /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/, /^https:\/\/.*\.vercel\.app$/] as (string | RegExp | boolean)[]),
   databaseUrl: process.env.DATABASE_URL || 'file:./data/shadowadj.db',
   searchProvider: (process.env.SEARCH_PROVIDER || 'mock') as 'mock' | 'exa' | 'brave' | 'bing',
   // 'auto' -> server transcription when a key is present; 'browser' -> force Web Speech API

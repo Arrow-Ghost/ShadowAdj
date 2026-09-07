@@ -746,8 +746,8 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-server.listen(config.port, () => {
-  console.log(`[shadowadj] backend on http://localhost:${config.port}`);
+server.listen(config.port, '0.0.0.0', () => {
+  console.log(`[shadowadj] backend on http://0.0.0.0:${config.port}`);
   console.log(`[shadowadj] CORS origin: ${config.corsOrigin.map((o) => (o instanceof RegExp ? o.source : o)).join(', ')}`);
 });
 

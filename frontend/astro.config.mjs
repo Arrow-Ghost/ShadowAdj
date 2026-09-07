@@ -1,13 +1,11 @@
 import { defineConfig } from 'astro/config';
 import react from '@astrojs/react';
 import tailwind from '@astrojs/tailwind';
-import node from '@astrojs/node';
 
-// Server-rendered (dynamic) — every route is rendered per request by the Node
-// adapter. A route can still opt back into static with `export const prerender = true`.
+// Static output — built as high-performance static assets for Vercel Edge CDN.
+// All dynamic audio streaming and API calls connect client-side to the Render backend.
 export default defineConfig({
-  output: 'server',
-  adapter: node({ mode: 'standalone' }),
+  output: 'static',
   integrations: [react(), tailwind()],
   server: { port: 4321, host: '127.0.0.1' },
   vite: {

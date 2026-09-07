@@ -1,5 +1,5 @@
-export const API_BASE: string =
-  (import.meta as any).env?.PUBLIC_API_BASE || 'http://localhost:8787';
+const rawBase: string = (import.meta as any).env?.PUBLIC_API_BASE || 'http://localhost:8787';
+export const API_BASE: string = rawBase.replace(/\/+$/, '');
 
 export type SessionMode = 'debate-practice' | 'interview-prep' | 'speech-coaching';
 
